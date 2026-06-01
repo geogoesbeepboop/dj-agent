@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.pytest_cache/
+.ruff_cache/
+renders/
+*.wav
+*.mp3
+*.flac
+uv.lock

@@ -1,0 +1,39 @@
+[project]
+name = "dj-agent"
+version = "0.1.0"
+description = "Analyze a music library into a vibe vector DB and build real beatmatched DJ sets with a planned energy arc."
+readme = "BUILD_PLAN.md"
+requires-python = ">=3.12,<3.14"   # librosa/numba lag the newest Python
+
+dependencies = [
+    "agent-core",                  # substrate (editable, see [tool.uv.sources])
+    "numpy>=1.26",
+    "python-dotenv>=1.0",
+    "librosa>=0.10",               # BPM / key / energy / timbre
+    "soundfile>=0.12",             # audio I/O for librosa.load
+    "psycopg2-binary>=2.9",        # pgvector via Postgres/Supabase
+]
+
+[project.optional-dependencies]
+# Phase 2+: the LLM agents (Architect/Selector) + the mixer + CLAP upgrade.
+agents = ["claude-agent-sdk>=0.1"]
+mixer  = ["pydub>=0.25", "pyrubberband>=0.3"]
+dev    = ["pytest>=8.0", "ruff>=0.6"]
+
+[tool.uv.sources]
+agent-core = { path = "../agent-core", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dj"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths  = ["tests"]
