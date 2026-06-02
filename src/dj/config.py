@@ -9,13 +9,22 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Dimensionality of the v1 engineered "vibe vector" (see vibe/embed.py).
-# Phase 5 swaps this for CLAP's 512-d learned embedding — change in one place.
-VIBE_DIM = 28
-
 
 def _env(name: str, default: str) -> str:
     return os.getenv(name, default)
+
+
+# Dimensionality of the CLAP vibe vector (see vibe/clap.py). Must match the
+# vector(VIBE_DIM) column in vibe/schema.sql — change both together.
+VIBE_DIM = 512
+
+# CLAP model (HuggingFace transformers). The music-specific variant clusters
+# musical semantics better than the general CLAP for a DJ library.
+CLAP_MODEL = _env("CLAP_MODEL", "laion/larger_clap_music")
+
+# CLAP's required input sample rate (the model is trained at 48 kHz). Distinct
+# from Settings.sample_rate, which is the 22.05 kHz librosa uses for DSP.
+CLAP_SAMPLE_RATE = int(_env("DJ_CLAP_SAMPLE_RATE", "48000"))
 
 
 @dataclass(frozen=True)

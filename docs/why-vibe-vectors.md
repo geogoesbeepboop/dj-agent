@@ -40,8 +40,15 @@ Classic collaborative filtering (Spotify's core approach) requires:
 - A shared item catalog
 
 You have neither — you have *your* library and *your* listening behavior. CLAP
-(Phase 5) and even the v1 engineered vector work from the audio signal itself,
-with no external data dependency.
+works from the audio signal itself, with no external data dependency.
+
+## Text→audio is a day-one capability
+
+Because CLAP embeds audio and text into the *same* space, a text prompt
+("dreamy and nocturnal") can be encoded and compared directly against the stored
+audio vectors (`store.nearest_to_text`). So semantic vibe search isn't a future
+upgrade — it's available as soon as the library is ingested. See
+`embeddings.md`.
 
 The other thing Spotify can't do: **audio manipulation**. Their licensing
 prevents time-stretching, EQ, or crossfading. That's the hardware moat this

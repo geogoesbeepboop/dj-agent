@@ -1,7 +1,7 @@
 """Analysis test on a synthetic click track — no audio files needed.
 
 Skipped automatically if librosa isn't installed, so the fast unit tests
-(camelot, embed) still run in a minimal environment.
+(camelot, metadata) still run in a minimal environment.
 """
 
 import numpy as np
@@ -33,7 +33,9 @@ def test_features_from_signal_basic():
     # energy curve is the right length and within 0..1
     assert len(f.energy_curve) == 8
     assert all(0.0 <= e <= 1.0 for e in f.energy_curve)
-    assert len(f.mfcc) == 13
+    # pitch_class / mode are populated
+    assert 0 <= f.pitch_class <= 11
+    assert f.mode in ("major", "minor")
 
 
 def test_bpm_in_reasonable_range():

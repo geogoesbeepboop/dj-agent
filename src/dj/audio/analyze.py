@@ -1,14 +1,21 @@
-"""Audio analysis: a track file → TrackFeatures (BPM, key, energy, timbre).
+"""Audio analysis: a track file → TrackFeatures (the structured mixing data).
 
-librosa is imported lazily so the package imports fine without it (and tests
-that don't touch audio stay fast). The real signal-processing lives in
-`_features_from_signal`, which takes a raw waveform — so it's unit-testable with
-a synthetic numpy signal, no audio files required.
+This produces the *hard mixing constraints* — BPM, key→Camelot, duration, and
+the energy arc — that the Selector filters on. The *semantic* "what does this
+feel like" representation is handled separately by CLAP (see vibe/clap.py), so
+this module deliberately does NOT compute timbre features (MFCCs, spectral
+stats): CLAP covers that, and the Critic (Phase 4) measures spectral
+discontinuity on the actual audio at mix points, which is more correct than a
+per-track average.
+
+librosa is imported lazily so the package imports fine without it. The real
+signal processing lives in `_features_from_signal`, which takes a raw waveform —
+so it's unit-testable with a synthetic numpy signal, no audio files required.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -27,6 +34,8 @@ ENERGY_CURVE_POINTS = 8  # downsample the RMS envelope to this many points
 
 @dataclass
 class TrackFeatures:
+    """Structured mixing features. Semantics live in the CLAP vector, not here."""
+
     path: str
     duration_s: float
     bpm: float
@@ -35,14 +44,10 @@ class TrackFeatures:
     camelot: str
     energy_mean: float
     energy_curve: list[float]       # ENERGY_CURVE_POINTS, normalized 0..1
-    spectral_centroid: float
-    spectral_rolloff: float
-    zero_crossing_rate: float
-    mfcc: list[float] = field(default_factory=list)  # 13 coefficients
 
 
 def analyze(path: str, sample_rate: int = 22050) -> TrackFeatures:
-    """Load an audio file and extract features. Requires librosa + soundfile."""
+    """Load an audio file and extract structured features. Needs librosa + soundfile."""
     import librosa
 
     y, sr = librosa.load(path, sr=sample_rate, mono=True)
@@ -66,16 +71,10 @@ def _features_from_signal(y: np.ndarray, sr: int) -> TrackFeatures:
     pitch_class, mode = _estimate_key(chroma)
     code = camelot.to_camelot(pitch_class, mode)
 
-    # --- energy envelope ---
+    # --- energy envelope (the arc the Architect/Selector shape) ---
     rms = librosa.feature.rms(y=y)[0]
     energy_mean = float(np.mean(rms))
     energy_curve = _downsample_normalized(rms, ENERGY_CURVE_POINTS)
-
-    # --- timbre / brightness ---
-    centroid = float(np.mean(librosa.feature.spectral_centroid(y=y, sr=sr)))
-    rolloff = float(np.mean(librosa.feature.spectral_rolloff(y=y, sr=sr)))
-    zcr = float(np.mean(librosa.feature.zero_crossing_rate(y=y)))
-    mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13).mean(axis=1)
 
     return TrackFeatures(
         path="",
@@ -86,10 +85,6 @@ def _features_from_signal(y: np.ndarray, sr: int) -> TrackFeatures:
         camelot=code,
         energy_mean=energy_mean,
         energy_curve=energy_curve,
-        spectral_centroid=centroid,
-        spectral_rolloff=rolloff,
-        zero_crossing_rate=zcr,
-        mfcc=[float(x) for x in mfcc],
     )
 
 

@@ -6,9 +6,10 @@
 ## Context
 
 The vibe vector store needs approximate nearest-neighbor search over ~10k
-track embeddings (28-d for v1, 512-d for Phase 5 CLAP). Dedicated vector DBs
-(Pinecone, Weaviate, Qdrant) are purpose-built for this. We also use Supabase
-for general storage (the tracks table).
+512-d CLAP track embeddings. Dedicated vector DBs (Pinecone, Weaviate, Qdrant)
+are purpose-built for this. We also use Supabase for general storage (the
+tracks table). Reaffirmed at 512-d when the project went CLAP-first; the
+dimension change does not alter the scale math.
 
 ## Decision
 
@@ -22,7 +23,7 @@ dedicated vector DB.
   to manage, and another thing to break.
 - **Scale fits.** A 10k-track library at 512-d CLAP vectors is ~20 MB of
   vector data. HNSW in pgvector handles sub-millisecond ANN at this scale.
-  The "pgvector doesn't scale" argument applies at 100M+ vectors.
+  The "pgvector doesn't scale" argument applies at 100M+ vectors, not here.
 - **Transactional consistency.** Track metadata and embedding live in the same
   row, same transaction. No sync lag between a metadata DB and a separate
   vector store.

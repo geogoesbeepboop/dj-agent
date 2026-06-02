@@ -32,7 +32,9 @@ Agent harness = Claude Agent SDK  (Architect + Selector are agent-centric)
 **Why embeddings/pgvector genuinely belong HERE** (unlike the migration agent):
 relevance is *fuzzy* ("does this fit the vibe?") and the corpus is *large/open*
 (your whole library). That's the exact both-halves-true case RAG/vector search is
-for. See `docs/why-vibe-vectors.md`.
+for. We use **CLAP** learned audio+text embeddings from the start, so semantic
+**text→audio** search ("find me something dreamy and nocturnal") works on day
+one. See `docs/why-vibe-vectors.md` and `docs/embeddings.md`.
 
 ---
 
@@ -52,10 +54,11 @@ transitions), which they can't do for licensing reasons.
 |---|---|
 | Agent harness (Architect/Selector) | `claude-agent-sdk` |
 | Substrate (tracing/budget/queue) | `agent-core[anthropic]` (local editable) |
-| Audio analysis (BPM/key/structure/energy) | `librosa` (+ `soundfile`); `madmom`/`essentia` later for better beats |
-| Vibe embedding (v1) | engineered feature vector (numpy) → pgvector |
-| Vibe embedding (Phase 5 upgrade) | **CLAP** learned audio embeddings (text↔audio search) |
+| Audio analysis (BPM/key/energy arc) | `librosa` (+ `soundfile`); `madmom`/`essentia` later for better beats |
+| Vibe embedding | **CLAP** learned audio+text embeddings (`laion/larger_clap_music`, 512-d) via `torch`+`transformers` → pgvector |
+| Metadata tags | `mutagen` (genre/mood → keyword filter, complements CLAP) |
 | Vector store | `pgvector` via `psycopg2` + Supabase |
+| Track sources | `SourceProvider` seam: local now; Jamendo/FMA (CC-licensed) later |
 | Mixer / rendering | `pydub` + `pyrubberband` (time-stretch); stem separation later |
 | Harmonic mixing | Camelot wheel (pure logic, `dj/audio/camelot.py`) |
 | Tracing / evals | `langfuse` via agent-core |
@@ -87,34 +90,34 @@ before it spends time rendering audio. Becomes a "set acceptance rate" metric.
 
 ## Phases
 
-### Phase 0 — Scaffold ✅ (done in this scaffolding pass)
+### Phase 0 — Scaffold ✅ + Phase 1 — Curator + Vibe DB (CLAP-first) ✅ code complete
 ```
 src/dj/
-├── config.py          # settings: DATABASE_URL, audio dirs, embedding dim
+├── config.py          # settings: DATABASE_URL, CLAP_MODEL, sample rates, dim
 ├── audio/
-│   ├── analyze.py      # librosa → TrackFeatures (BPM, key, energy, spectral)
+│   ├── analyze.py      # librosa → TrackFeatures (BPM, key→Camelot, energy arc)
 │   └── camelot.py      # musical key → Camelot code + compatibility (pure logic)
 ├── vibe/
-│   ├── schema.sql      # pgvector table: tracks + embedding
-│   ├── embed.py        # TrackFeatures → normalized vibe vector
-│   └── store.py        # upsert + cosine-KNN query (semantic vibe search)
-├── curator.py          # pipeline: file → analyze → embed → store
+│   ├── schema.sql      # pgvector table: structured cols + metadata + vector(512)
+│   ├── clap.py         # CLAP encoder: embed_audio + embed_text → 512-d vector
+│   └── store.py        # upsert + cosine KNN (nearest, nearest_to_text)
+├── metadata.py         # mutagen → ID3 tags (genre/mood) as keyword filter
+├── sources/            # SourceProvider seam: LocalFolderProvider (remote later)
+├── curator.py          # pipeline: source → analyze + CLAP + tags → store
 └── agents/             # Phase 2: Architect + Selector (Claude Agent SDK)
-tests/                  # camelot logic, embedding shape, synthetic-tone analysis
+tests/                  # camelot, analyze, metadata (fast); clap (slow)
 ```
-**Verify:** `uv run pytest -q` green; `uv run python -m dj.audio.camelot` prints a wheel.
-
-### Phase 1 — Curator + Vibe DB (the "gold mine")
-*Concept (ask `tutor`): embeddings, cosine similarity, pgvector.*
-- Flesh out `analyze.py`: BPM (beat tracking), key→Camelot, duration, an **energy
-  curve** (RMS over time), spectral features, structural segments (intro/outro
-  for cue points later).
-- `embed.py`: assemble a fixed-length normalized vector from those features.
-- `store.py`: create the pgvector table in Supabase; upsert analyzed tracks;
-  expose `nearest(vector, k)` cosine search.
-- `curator.py`: walk an audio folder, analyze+embed+store each track, idempotently.
-**Verify:** ingest a folder → run a vibe query ("most similar to track X") →
-get sensible neighbors. Print BPM/key alongside to sanity-check.
+*Concept (ask `tutor`): CLAP, contrastive audio-text embeddings, cosine, pgvector.*
+- `analyze.py`: BPM (beat tracking), key→Camelot, duration, energy **arc**
+  (RMS over time) — the structured mixing constraints.
+- `clap.py`: CLAP audio encoder (windowed + mean-pooled) → 512-d vibe vector;
+  CLAP text encoder for text→audio prompts. Runs locally (MPS on M1).
+- `metadata.py`: mutagen tags as a cheap keyword filter complementing CLAP.
+- `sources/`: ingest from any provider; `LocalFolderProvider` now.
+- `store.py`: pgvector table; `upsert_track`; `nearest` + `nearest_to_text`.
+- `curator.py`: per track → analyze + CLAP + tags → upsert, idempotently.
+**Verify:** ingest a folder → `nearest_to_text("dreamy nocturnal")` returns
+sensible neighbors; print title/genre/BPM/Camelot/distance to sanity-check.
 
 ### Phase 2 — Architect + Selector (Claude Agent SDK)
 *Concept (ask `tutor`): agent harness, tool calling, the Claude Agent SDK loop.*
@@ -141,9 +144,9 @@ requested arc (check with the eval metrics, no audio yet).
 - Demo: vibe prompt → rendered mix → the agent **explains its arc**
   ("held 122 BPM through warm-up, 8A→9A for lift, peak at track 9").
 
-### Phase 5 — CLAP embeddings + Taste/Memory
-- Swap the engineered vector for **CLAP** learned embeddings → enables
-  *text→audio* search ("find me something dreamy and nocturnal").
+### Phase 5 — Remote sources + Taste/Memory
+- Add CC-licensed `SourceProvider`s (Jamendo/FMA) behind the existing seam so
+  the agent never "runs out" of tracks. (CLAP is already the Phase 1 foundation.)
 - Learn taste from skips/replays; store accepted transitions to improve over time.
 
 ---

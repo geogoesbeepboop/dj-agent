@@ -9,13 +9,16 @@ dependencies = [
     "agent-core",                  # substrate (editable, see [tool.uv.sources])
     "numpy>=1.26",
     "python-dotenv>=1.0",
-    "librosa>=0.10",               # BPM / key / energy / timbre
+    "librosa>=0.10",               # BPM / key / energy (structured mixing features)
     "soundfile>=0.12",             # audio I/O for librosa.load
+    "torch>=2.2",                  # CLAP inference (MPS on Apple Silicon)
+    "transformers>=4.40",          # laion/larger_clap_music model + processor
+    "mutagen>=1.47",               # ID3 / metadata tags (genre, mood, title)
     "psycopg2-binary>=2.9",        # pgvector via Postgres/Supabase
 ]
 
 [project.optional-dependencies]
-# Phase 2+: the LLM agents (Architect/Selector) + the mixer + CLAP upgrade.
+# Phase 2+: the LLM agents (Architect/Selector) + the mixer.
 agents = ["claude-agent-sdk>=0.1"]
 mixer  = ["pydub>=0.25", "pyrubberband>=0.3"]
 dev    = ["pytest>=8.0", "ruff>=0.6"]
@@ -37,3 +40,9 @@ target-version = "py312"
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths  = ["tests"]
+# Deselect slow tests (CLAP model download/inference) from the default run.
+# Run them explicitly with:  uv run pytest -m slow
+addopts = "-m 'not slow'"
+markers = [
+    "slow: requires the CLAP model (downloads weights, runs inference)",
+]
