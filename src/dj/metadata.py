@@ -22,11 +22,12 @@ class TrackTags:
     genre: str = ""
     year: str = ""
     tags: list[str] = field(default_factory=list)  # normalized descriptor keywords
+    isrc: str = ""                                  # recording id → match parked reviews (ADR 0008)
 
     def merged_with(self, extra: list[str]) -> "TrackTags":
         """Return a copy with extra source-supplied tags folded in (deduped)."""
         combined = list(dict.fromkeys([*self.tags, *(_norm(t) for t in extra)]))
-        return TrackTags(self.title, self.artist, self.genre, self.year, combined)
+        return TrackTags(self.title, self.artist, self.genre, self.year, combined, self.isrc)
 
 
 def read_tags(path: str) -> TrackTags:
@@ -48,7 +49,45 @@ def read_tags(path: str) -> TrackTags:
     # Descriptor tags: genre + any 'mood'/'comment' fields, split and normalized.
     raw = [genre, _first(mf, "mood"), _first(mf, "comment")]
     tags = _dedupe(t for chunk in raw for t in _split(chunk))
-    return TrackTags(title=title, artist=artist, genre=genre, year=year, tags=tags)
+    return TrackTags(title=title, artist=artist, genre=genre, year=year, tags=tags,
+                     isrc=_read_isrc(path))
+
+
+def _read_isrc(path: str) -> str:
+    """Best-effort ISRC across ID3 (TSRC), MP4 (freeform atom), and Vorbis (ISRC).
+
+    EasyID3 doesn't surface ISRC, so this re-opens the file in raw mode. Degrades
+    to "" on anything missing or garbled — an untagged file still ingests fine.
+    """
+    try:
+        from mutagen import File as MutagenFile
+
+        mf = MutagenFile(path)
+    except Exception:
+        return ""
+    tags = getattr(mf, "tags", None)
+    if not tags:
+        return ""
+
+    getall = getattr(tags, "getall", None)
+    if getall:  # ID3 (mp3): TSRC frame
+        try:
+            frames = getall("TSRC")
+            if frames and frames[0].text:
+                return str(frames[0].text[0]).strip()
+        except Exception:
+            pass
+    for key in ("----:com.apple.iTunes:ISRC", "----:com.apple.iTunes:isrc",  # MP4
+                "isrc", "ISRC"):                                             # Vorbis (flac/ogg)
+        try:
+            val = tags.get(key)
+        except Exception:
+            val = None
+        if val:
+            v = val[0]
+            return (v.decode("utf-8", "ignore") if isinstance(v, (bytes, bytearray))
+                    else str(v)).strip()
+    return ""
 
 
 def _first(mf, key: str) -> str:

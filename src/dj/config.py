@@ -26,6 +26,21 @@ CLAP_MODEL = _env("CLAP_MODEL", "laion/larger_clap_music")
 # from Settings.sample_rate, which is the 22.05 kHz librosa uses for DSP.
 CLAP_SAMPLE_RATE = int(_env("DJ_CLAP_SAMPLE_RATE", "48000"))
 
+# --- Personal taste layer (docs/taste.md, ADR 0003) -------------------------
+# My free-text notes are embedded into this space by a small local
+# sentence-transformer — DISTINCT from CLAP's 512-d audio space. Must match the
+# tracks.taste_vec vector(TASTE_DIM) column in vibe/schema.sql.
+TASTE_DIM = 384
+TASTE_MODEL = _env("TASTE_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+
+# Default blend for ranking: score = α·acoustic + β·taste + γ·(rating/5).
+# Leans acoustic while taste labels are sparse; raise β as labels accumulate.
+TASTE_WEIGHTS = (
+    float(_env("DJ_W_ACOUSTIC", "0.5")),
+    float(_env("DJ_W_TASTE", "0.4")),
+    float(_env("DJ_W_RATING", "0.1")),
+)
+
 
 @dataclass(frozen=True)
 class Settings:

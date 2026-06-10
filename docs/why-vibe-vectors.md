@@ -39,8 +39,12 @@ Classic collaborative filtering (Spotify's core approach) requires:
 - User interaction data at scale (plays, skips, likes across millions of users)
 - A shared item catalog
 
-You have neither — you have *your* library and *your* listening behavior. CLAP
-works from the audio signal itself, with no external data dependency.
+You have neither — you have *your* library and *your* taste. So the personal
+signal comes from **explicit labels** (notes + ratings on the tracks you care
+about), embedded into a taste vector and propagated across the library via CLAP
+neighbors (`adr/0003-personal-taste-layer.md`, `taste.md`). CLAP supplies the
+acoustic backbone from the signal itself; your labels supply the "me." No
+cross-user data needed.
 
 ## Text→audio is a day-one capability
 
@@ -62,19 +66,24 @@ BPM + Camelot compatibility is a necessary constraint, not a sufficient
 similarity metric. Two tracks can be BPM-compatible and Camelot-compatible and
 still clash texturally (one is a hard techno kick, one is a soft ambient pad).
 
-The vector encodes timbre (MFCCs), brightness (spectral centroid), and energy
-shape (the 8-point curve) alongside tempo and key. Nearest-neighbor in that
-space returns candidates that are compatible *and* texturally similar.
+CLAP encodes timbre, instrumentation, and overall feel learned from millions of
+(audio, caption) pairs — *not* hand-picked DSP stats. Nearest-neighbor in that
+space returns candidates that are texturally similar; the personal **taste
+vector** then re-ranks them toward what *I* actually like (`taste.md`).
 
-BPM/Camelot compatibility becomes a hard filter the Selector applies *after*
-the vibe search narrows the candidate pool — you get the best of both.
+BPM/Camelot compatibility is a hard filter the Selector applies *after* the vibe
+search narrows the candidate pool — you get the best of both. And because
+sections are embedded too (`adr/0004-structure-aware-sections.md`), the same
+logic applies at the *part* level (the outro of A vs the intro of B), not just
+whole tracks.
 
 ---
 
 ## The agent-specific case
 
-The Selector (Phase 2) is a Claude Agent SDK agent that calls `query_vibe_db`
-as a tool. This is the right split:
+The Selector (Phase 3) is an LLM agent (on agent-core `complete()`; a Claude Agent
+SDK MCP server can wrap the toolbelt later) that calls `query_vibe_db` (blended
+acoustic+taste) and `nearest_section` as tools. This is the right split:
 
 - **LLM**: interprets the vibe prompt ("sunset rooftop, slow build to peak"),
   decides how to weight exploration vs exploitation, reasons about set narrative

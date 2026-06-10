@@ -56,10 +56,42 @@ def embed_audio(path: str) -> np.ndarray:
 
     _load()
     y, _ = librosa.load(path, sr=CLAP_SAMPLE_RATE, mono=True)
-    windows = _window(y, CLAP_SAMPLE_RATE)
-    vecs = [_encode_audio_window(w) for w in windows]
-    pooled = np.mean(vecs, axis=0)
-    return _l2(pooled)
+    _ensure_audio(y, path)
+    return _l2(np.mean([_encode_audio_window(w) for w in _window(y, CLAP_SAMPLE_RATE)], axis=0))
+
+
+def embed_track_and_sections(
+    path: str, bounds: list[tuple[float, float]]
+) -> tuple[np.ndarray, list[np.ndarray]]:
+    """Embed the whole track AND each section in ONE audio load (ADR 0004).
+
+    Mean-pool *all* windows → the discovery vector (`tracks.embedding`); mean-pool
+    only the windows inside each (start_s, end_s) span → that section's vector
+    (`sections.embedding`). Averaging a 6-min track's ambient intro with its peak
+    drop yields a mushy midpoint that represents neither — so the *parts* get
+    their own vectors, which is what transition matching actually compares.
+    """
+    import librosa
+
+    _load()
+    y, _ = librosa.load(path, sr=CLAP_SAMPLE_RATE, mono=True)
+    _ensure_audio(y, path)
+    track_vec = _l2(np.mean([_encode_audio_window(w) for w in _window(y, CLAP_SAMPLE_RATE)], axis=0))
+    section_vecs = [_embed_span(y, CLAP_SAMPLE_RATE, s, e) for s, e in bounds]
+    return track_vec, section_vecs
+
+
+def embed_sections(path: str, bounds: list[tuple[float, float]]) -> list[np.ndarray]:
+    """One CLAP vector per (start_s, end_s) span — the vibe of each part."""
+    return embed_track_and_sections(path, bounds)[1]
+
+
+def _embed_span(y: np.ndarray, sr: int, start_s: float, end_s: float) -> np.ndarray:
+    """Mean-pool the windows inside one time span into a section vibe vector."""
+    seg = y[int(start_s * sr): int(end_s * sr)]
+    if len(seg) < sr:           # < ~1 s of audio: fall back to the whole signal
+        seg = y
+    return _l2(np.mean([_encode_audio_window(w) for w in _window(seg, sr)], axis=0))
 
 
 def embed_text(text: str) -> np.ndarray:
@@ -92,6 +124,12 @@ def _window(y: np.ndarray, sr: int) -> list[np.ndarray]:
     n = min(_MAX_WINDOWS, max(1, len(y) // win))
     starts = np.linspace(0, len(y) - win, n).astype(int)
     return [y[s : s + win] for s in starts]
+
+
+def _ensure_audio(y: np.ndarray, path: str) -> None:
+    """Reject an empty/undecodable load before it reaches CLAP (Curator skips it)."""
+    if y is None or len(y) == 0:
+        raise ValueError(f"no decodable audio in {path}")
 
 
 def _l2(v: np.ndarray) -> np.ndarray:
