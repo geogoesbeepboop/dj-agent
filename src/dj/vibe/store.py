@@ -70,6 +70,11 @@ class SectionNeighbor:
     camelot: str
     energy_lufs: float | None
     distance: float
+    # Mix flags (assigned at ingest from the label) — the Selector's span planner
+    # picks its entry/exit sections by these. Defaults keep older call sites valid.
+    is_mixin: bool = False
+    is_mixout: bool = False
+    loopable: bool = False
 
 
 def _connect():
@@ -94,6 +99,7 @@ def upsert_track(
     sections: list[SectionInput] | None = None,
     source: str = "local",
     is_favorite: bool = False,
+    first_downbeat_s: float | None = None,
 ) -> None:
     """Insert/replace one analyzed track + its CLAP vector + metadata + sections.
 
@@ -108,8 +114,9 @@ def upsert_track(
             """
             INSERT INTO tracks
                 (path, source, duration_s, bpm, camelot, loudness_lufs, energy_curve,
-                 title, artist, genre, isrc, tags, is_favorite, embedding)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 first_downbeat_s, title, artist, genre, isrc, tags, is_favorite,
+                 embedding)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (path) DO UPDATE SET
                 source        = EXCLUDED.source,
                 duration_s    = EXCLUDED.duration_s,
@@ -117,6 +124,7 @@ def upsert_track(
                 camelot       = EXCLUDED.camelot,
                 loudness_lufs = EXCLUDED.loudness_lufs,
                 energy_curve  = EXCLUDED.energy_curve,
+                first_downbeat_s = EXCLUDED.first_downbeat_s,
                 title         = EXCLUDED.title,
                 artist        = EXCLUDED.artist,
                 genre         = EXCLUDED.genre,
@@ -138,6 +146,7 @@ def upsert_track(
                 features.camelot,
                 features.loudness_lufs,
                 features.energy_curve,          # psycopg2 adapts list → REAL[]
+                first_downbeat_s,
                 tags.title or None,
                 tags.artist or None,
                 tags.genre or None,
@@ -281,7 +290,8 @@ def get_cards(paths: list[str]) -> dict[str, dict[str, Any]]:
         return {}
     with _connect() as conn, conn.cursor() as cur:
         cur.execute(
-            """SELECT path, title, artist, bpm, camelot, loudness_lufs, rating, taste_source
+            """SELECT path, title, artist, bpm, camelot, loudness_lufs, rating,
+                      taste_source, first_downbeat_s
                FROM tracks WHERE path = ANY(%s)""",
             (list(paths),),
         )
@@ -290,6 +300,7 @@ def get_cards(paths: list[str]) -> dict[str, dict[str, Any]]:
         r[0]: {
             "title": r[1] or "", "artist": r[2] or "", "bpm": float(r[3]),
             "camelot": r[4], "lufs": float(r[5]), "rating": r[6], "taste_source": r[7],
+            "first_downbeat_s": (None if r[8] is None else float(r[8])),
         }
         for r in rows
     }
@@ -374,7 +385,8 @@ def get_sections(path: str) -> list[SectionNeighbor]:
     with _connect() as conn, conn.cursor() as cur:
         cur.execute(
             """SELECT t.path, s.track_id, s.idx, s.label, s.start_s, s.end_s,
-                      s.start_beat, t.bpm, t.camelot, s.energy_lufs
+                      s.start_beat, t.bpm, t.camelot, s.energy_lufs,
+                      s.is_mixin, s.is_mixout, s.loopable
                FROM sections s JOIN tracks t ON t.id = s.track_id
                WHERE t.path = %s ORDER BY s.idx""",
             (path,),
@@ -384,6 +396,7 @@ def get_sections(path: str) -> list[SectionNeighbor]:
                 path=r[0], track_id=r[1], idx=r[2], label=r[3], start_s=float(r[4]),
                 end_s=float(r[5]), start_beat=r[6], bpm=float(r[7]), camelot=r[8],
                 energy_lufs=(None if r[9] is None else float(r[9])), distance=0.0,
+                is_mixin=bool(r[10]), is_mixout=bool(r[11]), loopable=bool(r[12]),
             )
             for r in cur.fetchall()
         ]

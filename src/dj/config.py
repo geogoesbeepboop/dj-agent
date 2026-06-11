@@ -70,6 +70,17 @@ class Settings:
     )
     # HITL: 'full' (approve set before render) | 'none'.
     hitl_level: str = field(default_factory=lambda: _env("HITL_LEVEL", "full"))
+    # allin1 structure detector (ADR 0005/0012). The Python package fights the
+    # venv's torch pins, so segment.py can also drive an allin1 CLI living in a
+    # DIFFERENT Python (e.g. the python.org framework install) as a subprocess.
+    # Empty bin = CLI bridge disabled (librosa fallback only, if the module is
+    # also absent). Results are cached as JSON per track, so re-ingest is free.
+    allin1_bin: str = field(default_factory=lambda: _env("DJ_ALLIN1_BIN", "allin1"))
+    allin1_cache_dir: str = field(
+        default_factory=lambda: _env("DJ_ALLIN1_CACHE", "~/.cache/dj-agent/allin1")
+    )
+    # Passed to `allin1 -d` (e.g. 'cpu', 'mps'); empty = allin1's own default.
+    allin1_device: str = field(default_factory=lambda: _env("DJ_ALLIN1_DEVICE", ""))
 
     @property
     def db_enabled(self) -> bool:

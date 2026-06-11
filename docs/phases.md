@@ -266,6 +266,37 @@ runners, fake spotipy clients, fake stores).
 
 197 fast tests green (was 103); `ruff` clean.
 
+## 2026-06-10 grid-truth pass (ADR 0011): real downbeats, snapped cues, honest labels
+
+The "elementary set" gap: the librosa fallback took `beats[::4]` as downbeats
+(right tempo, possibly wrong *phase* → cues a beat or two off the "1") and
+labeled sections purely by energy + position (a cold-open hook read as an
+"intro" — a supposed clean mix-in point on the loudest bar). Fixed offline:
+
+- **Downbeat phase estimation** (`segment.estimate_downbeat_phase` +
+  `beat_accents`): per-beat musical accents (onset strength, <150 Hz bass
+  energy, harmonic change into the beat) score all four candidate phases; the
+  winner is the bar-1 train. `beats_to_downbeats` takes the phase.
+- **Grid-snapped section bounds** (`snap_bounds_to_downbeats`,
+  `snap_time_to_grid`): boundary edges quantize to the nearest downbeat
+  (2-beat tolerance) in BOTH detector paths, so every downstream cue point —
+  MIX IN/OUT marks, mixer splices — lands exactly on a "1".
+- **Recurrence-aware labels** (`section_recurrence` + extended
+  `label_sections`): a section whose chroma+MFCC content repeats non-adjacently
+  is a `chorus` even at mid energy; a first/last section at near-peak energy is
+  a cold open / hot ending (`chorus`), not an `intro`/`outro`. `assign_mix_flags`
+  now guarantees ≥1 mix-in and ≥1 mix-out per track (first-in/last-out fallback).
+- **Beat-grid anchor export** (backlog **E2** → shipped): new
+  `tracks.first_downbeat_s` column (additive migration), threaded
+  Curator → store → `TrackCard` → `Slot.first_downbeat_s` → a real
+  `TEMPO Inizio/Bpm/Metro/Battito` element in the rekordbox XML whenever the
+  anchor is known; tracks without one still omit TEMPO (rekordbox analyzes).
+  `.claude/agents/rekordbox-validator.md` check 4 updated to match.
+
+Needs George: re-ingest to populate anchors/snapped bounds on old rows; verify
+in rekordbox that a supplied anchor wins over re-analysis; ears on the fallback
+labels (`docs/your-todo.md`). 227 fast tests green (was 197); `ruff` clean.
+
 ## Lingering open questions
 
 | Question | Who decides | Blocking |

@@ -70,12 +70,13 @@ Work top-to-bottom.
       rekordbox: Preferences → Advanced → Database → enable **rekordbox xml** →
       point it at the file → drag the "dj-agent — <arc>" playlist in. Order,
       key, BPM, and the planned **MIX IN/OUT cues** (hot cues + memory cues at
-      the chosen section's bounds) are pre-set — you perform the transitions.
-      Honest caveat: we don't export a beat grid (the XML omits the TEMPO
-      element on purpose — an anchor we can't place correctly is worse than
-      none), so rekordbox analyzes the grid on import; the cue marks are
-      wall-clock seconds, so they land correctly regardless (backlog **E2**
-      would export a real anchor).
+      the chosen section's bounds, now snapped to the downbeat grid) are
+      pre-set — you perform the transitions. Tracks with a stored first
+      downbeat also carry a real **beat-grid anchor** (`TEMPO Inizio`,
+      ADR 0011); **verify on this first import that the supplied grid wins over
+      rekordbox's re-analysis** — zoom the waveform and check the bar-1 lines
+      sit on the kicks. Tracks ingested before the anchor existed omit TEMPO
+      (rekordbox analyzes them itself); a re-ingest fixes that.
 - [ ] **Render + LISTEN** (automatic mode): re-run generate with `--render`
       (needs the `mixer` extra + rubberband) — one continuous beatmatched file.
 - [ ] **Eval A/B** (after ~50 tags): `uv run python -m dj.evals.runner "<same brief>"`
@@ -89,9 +90,15 @@ Work top-to-bottom.
       The renderer does tempo-glide equal-power crossfades but does **not** yet
       sample-accurately phase-lock downbeats or match seam tempo. If transitions sound
       off-grid, that's expected → prioritize **backlog A1** and we'll tune it together.
-- [ ] **Section labels**: do the detected `drop`/`break`/`intro`/`bridge` labels match
-      reality on your tracks? If the librosa fallback mislabels, that tells us whether
+- [ ] **Section labels**: do the detected `drop`/`break`/`intro`/`bridge`/`chorus`
+      labels match reality on your tracks? The fallback now detects repeated
+      material as `chorus` and won't call a cold-open hook an "intro"
+      (ADR 0011), but it's still a heuristic — mislabels tell us whether
       `allin1` is worth fighting to install.
+- [ ] **Downbeat phase** (ADR 0011): spot-check a few tracks in rekordbox — do
+      the exported grid's bar-1s and the MIX IN cues sit on actual "1"s? The
+      fallback picks the phase by musical accent (kick/bass/harmonic change);
+      if it's consistently off on a genre, the accent weights are tunable.
 - [ ] **Spotify→YouTube match quality**: play a few Spotify-sourced downloads —
       did the duration-dominant scorer pick the studio cut (not a live/sped-up/
       cover version)? Misses tell us how to reweight `download.pick_best`.

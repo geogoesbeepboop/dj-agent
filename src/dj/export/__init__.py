@@ -7,5 +7,6 @@ no DB, no audio, no network.
 """
 
 from dj.export.rekordbox import write_m3u8, write_rekordbox_xml
+from dj.export.setsheet import write_setsheet
 
-__all__ = ["write_m3u8", "write_rekordbox_xml"]
+__all__ = ["write_m3u8", "write_rekordbox_xml", "write_setsheet"]

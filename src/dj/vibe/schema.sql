@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS tracks (
     camelot       TEXT NOT NULL,
     loudness_lufs REAL NOT NULL,                   -- integrated LUFS, cross-track comparable
     energy_curve  REAL[] NOT NULL,                 -- 8-pt normalized arc (display only)
+    first_downbeat_s REAL,                         -- first bar-"1" time (s) → rekordbox grid anchor (ADR 0011)
 
     -- metadata (cheap semantic bridge + display)
     title         TEXT,
@@ -96,6 +97,7 @@ ALTER TABLE tracks ADD COLUMN IF NOT EXISTS taste_confidence REAL;
 ALTER TABLE tracks ADD COLUMN IF NOT EXISTS rating       SMALLINT;
 ALTER TABLE tracks ADD COLUMN IF NOT EXISTS role         TEXT;
 ALTER TABLE tracks ADD COLUMN IF NOT EXISTS isrc         TEXT;
+ALTER TABLE tracks ADD COLUMN IF NOT EXISTS first_downbeat_s REAL;
 ALTER TABLE tracks DROP COLUMN IF EXISTS energy_mean;
 
 -- Approximate nearest-neighbor indexes for fast cosine "vibe" search.

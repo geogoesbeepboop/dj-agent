@@ -101,8 +101,12 @@ class Arc:
         return cls(name=name, minutes=minutes, points=points)
 
 
-def shape_from_brief(brief: str) -> str:
-    """Pick an arc shape from keywords in a free-text vibe brief (heuristic)."""
+def shape_from_brief(brief: str, default: str = "build") -> str:
+    """Pick an arc shape from keywords in a free-text vibe brief (heuristic).
+
+    `default` is what an unopinionated brief gets — callers with a genre profile
+    pass its shape (techno briefs default to 'peak'), but explicit brief keywords
+    always win."""
     b = brief.lower()
     if any(w in b for w in ("wave", "ebb", "peaks and valley", "up and down")):
         return "wave"
@@ -112,7 +116,9 @@ def shape_from_brief(brief: str) -> str:
         return "peak"
     if any(w in b for w in ("steady", "flat", "background", "dinner", "lounge")):
         return "flat"
-    return "build"  # the default: a slow rise, the most common request
+    if any(w in b for w in ("slow build", "build up", "build-up", "journey", "rise")):
+        return "build"
+    return default if default in SHAPES else "build"
 
 
 def _shape_curve(shape: str, n: int) -> list[float]:

@@ -33,11 +33,13 @@ class TrackCard:
     score: float                 # blended acoustic+taste+rating retrieval score
     rating: int | None = None
     taste_source: str | None = None
+    first_downbeat_s: float | None = None   # beat-grid anchor (ADR 0011)
 
     def to_slot(self, position: float) -> Slot:
         return Slot(
             position=position, path=self.path, bpm=self.bpm, camelot=self.camelot,
             lufs=self.lufs, title=self.title, artist=self.artist, taste_score=self.score,
+            first_downbeat_s=self.first_downbeat_s,
         )
 
 
@@ -84,6 +86,7 @@ def query_vibe_db(
             path=c.path, title=f["title"], artist=f["artist"], bpm=f["bpm"],
             camelot=f["camelot"], lufs=f["lufs"], score=_blended_score(c, w),
             rating=f["rating"], taste_source=f["taste_source"],
+            first_downbeat_s=f.get("first_downbeat_s"),
         ))
     return out
 

@@ -24,12 +24,21 @@ class Slot:
     lufs: float
     title: str = ""
     artist: str = ""
-    # Which part to actually play (ADR 0004). None → the whole track.
+    # Which part to actually play (ADR 0004). None → the whole track. The cue
+    # span runs from a mix-IN section's start to a mix-OUT section's end; the
+    # "core" section between them is the part the arc targeted (the energy the
+    # Critic scores). core_start_s is only set when it differs from cue_start_s.
     section_idx: int | None = None
     section_label: str | None = None
     cue_start_s: float | None = None
     cue_end_s: float | None = None
+    mixin_label: str | None = None       # label of the section the cue enters on
+    mixout_label: str | None = None      # label of the section the cue exits on
+    core_start_s: float | None = None    # where the core section hits (hot-cue 2)
     taste_score: float = 0.0             # blended retrieval score (for display/sorting)
+    # First bar-"1" time (s) from segmentation (ADR 0011) — the rekordbox
+    # beat-grid anchor. None → the export omits TEMPO and rekordbox analyzes.
+    first_downbeat_s: float | None = None
 
     @property
     def display(self) -> str:
@@ -52,6 +61,9 @@ class SetPlan:
 
     arc: Arc
     slots: list[Slot]
+    # Which genre profile (dj/profiles.py) shaped this plan — the Mixer reads it
+    # back at render time for crossfade/stretch policy. None → the open default.
+    genre: str | None = None
 
     @property
     def paths(self) -> list[str]:
@@ -62,8 +74,13 @@ class SetPlan:
 
     def to_dict(self) -> dict:
         """Plain-data form — the whole plan round-trips through JSON (persist.py)."""
-        return {"arc": self.arc.to_dict(), "slots": [s.to_dict() for s in self.slots]}
+        return {
+            "arc": self.arc.to_dict(),
+            "genre": self.genre,
+            "slots": [s.to_dict() for s in self.slots],
+        }
 
     @classmethod
     def from_dict(cls, d: dict) -> "SetPlan":
-        return cls(arc=Arc.from_dict(d["arc"]), slots=[Slot.from_dict(s) for s in d.get("slots", [])])
+        return cls(arc=Arc.from_dict(d["arc"]), slots=[Slot.from_dict(s) for s in d.get("slots", [])],
+                   genre=d.get("genre"))

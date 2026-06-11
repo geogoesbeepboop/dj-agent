@@ -82,3 +82,50 @@ def test_set_duration_seconds_subtracts_the_overlap():
     ]
     dur = set_duration_seconds(SetPlan(arc, slots))
     assert 200 < dur < 240                          # 240 s of audio minus the crossfade
+
+
+# --- phrase quantization + genre physics --------------------------------------
+
+
+def test_quantize_phrase_bars_snaps_to_powers_of_two():
+    from dj.mixer import quantize_phrase_bars
+
+    assert quantize_phrase_bars(1) == 1
+    assert quantize_phrase_bars(3) == 2
+    assert quantize_phrase_bars(7) == 4      # a 7-bar blend would end mid-phrase
+    assert quantize_phrase_bars(8) == 8
+    assert quantize_phrase_bars(12) == 8
+    assert quantize_phrase_bars(33) == 32
+    assert quantize_phrase_bars(0) == 1
+
+
+def test_crossfade_bars_is_phrase_quantized():
+    # ~12-bar section at 124 → half is 6 → quantized DOWN to a 4-bar phrase.
+    twelve_bars_s = 12 * 4 * 60.0 / 124
+    assert crossfade_bars(twelve_bars_s, 124) == 4
+
+
+def test_clamp_target_bpm_caps_the_stretch():
+    from dj.mixer import clamp_target_bpm
+
+    assert clamp_target_bpm(124, 120, 0.05) == 124          # within ±5%
+    assert clamp_target_bpm(130, 120, 0.05) == 126          # capped high
+    assert clamp_target_bpm(110, 120, 0.05) == 114          # capped low
+    assert clamp_target_bpm(0, 120, 0.05) == 120            # no target → native
+    assert clamp_target_bpm(124, 0, 0.05) == 124            # no source → target
+
+
+def test_plan_transitions_respects_the_genre_profile():
+    # A hip-hop plan: blends cap at 2 bars and a rap vocal is never bent >3%.
+    arc = Arc.from_shape("flat", shape="flat", bpm=(95, 95))
+    slots = [
+        Slot(0.0, "a", 92, "8A", -10, cue_start_s=0, cue_end_s=120),
+        Slot(1.0, "b", 100, "9A", -10, cue_start_s=0, cue_end_s=120),
+    ]
+    trans = plan_transitions(SetPlan(arc, slots, genre="hiphop"))
+    assert trans[0].bars <= 2                               # cut, not a long blend
+    assert trans[0].target_bpm == 97.0                      # 95 clamped to 100·0.97
+    # The SAME slots as a house plan: longer blend, the arc tempo is reachable.
+    house = plan_transitions(SetPlan(arc, slots, genre="house"))
+    assert house[0].bars > trans[0].bars
+    assert house[0].target_bpm == 95.0

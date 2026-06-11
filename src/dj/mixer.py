@@ -45,6 +45,7 @@ class Transition:
     to_path: str
     crossfade_s: float
     target_bpm: float
+    bars: int = 0                # the overlap's phrase length (for cue sheets)
 
 
 # --- pure planning (unit-tested; no audio) ----------------------------------
@@ -57,15 +58,27 @@ def section_bars(length_s: float | None, bpm: float) -> int | None:
     return max(1, int(round(length_s * bpm / (60 * BEATS_PER_BAR))))
 
 
+def quantize_phrase_bars(bars: int) -> int:
+    """Largest power-of-two bar count ≤ `bars` (min 1) — blends live on phrases.
+
+    Dance music phrases in 1/2/4/8/16/32 bars; a 7-bar crossfade ends mid-phrase
+    and feels like a stumble even when every beat lined up."""
+    out = 1
+    while out * 2 <= max(1, bars):
+        out *= 2
+    return out
+
+
 def crossfade_bars(out_section_len_s: float | None, bpm: float, max_bars: int = MAX_XFADE_BARS) -> int:
-    """Phrase-derived overlap length: ~half the outgoing section, capped (ADR 0007).
+    """Phrase-derived overlap length: ~half the outgoing section, quantized to a
+    power-of-two phrase, capped (ADR 0007).
 
     A fixed 8-bar crossfade swallows a 4-bar outro and underuses a 32-bar one.
     Deriving it from the section grid keeps the blend inside one phrase."""
     bars = section_bars(out_section_len_s, bpm)
     if bars is None:
-        return max(1, min(max_bars, 4))
-    return max(1, min(max_bars, bars // 2 or 1))
+        return quantize_phrase_bars(max(1, min(max_bars, 4)))
+    return quantize_phrase_bars(max(1, min(max_bars, bars // 2 or 1)))
 
 
 def crossfade_seconds(bpm: float, bars: int) -> float:
@@ -82,18 +95,43 @@ def stretch_ratio(src_bpm: float, dst_bpm: float) -> float:
     return float(dst_bpm / src_bpm)
 
 
-def plan_transitions(plan: SetPlan) -> list[Transition]:
-    """Plan every adjacent A→B mix from the slots' sections + the arc tempo."""
+def clamp_target_bpm(target_bpm: float, src_bpm: float, max_stretch: float) -> float:
+    """Cap how far a track is bent toward the arc tempo (genre policy).
+
+    Stretching house ±8% passes; stretching a rap or bachata vocal that far
+    warbles. When the arc asks for more than the genre tolerates, beatmatch as
+    close as allowed — the Critic already flagged the jump at plan time."""
+    if src_bpm <= 0 or target_bpm <= 0:
+        return target_bpm if target_bpm > 0 else src_bpm
+    lo, hi = src_bpm * (1.0 - max_stretch), src_bpm * (1.0 + max_stretch)
+    return float(min(max(target_bpm, lo), hi))
+
+
+def plan_transitions(plan: SetPlan, profile=None) -> list[Transition]:
+    """Plan every adjacent A→B mix from the slots' sections + the arc tempo.
+
+    The genre profile (from `plan.genre` unless passed) sets the crossfade cap
+    and the tempo-stretch limit — 16-bar house blends vs 2-bar hip-hop cuts."""
+    profile = profile or _resolve_profile(plan)
     transitions: list[Transition] = []
     for i, (a, b) in enumerate(zip(plan.slots, plan.slots[1:])):
         a_len = _slot_length_s(a)
-        bars = crossfade_bars(a_len, a.bpm)
+        bars = crossfade_bars(a_len, a.bpm, max_bars=profile.max_xfade_bars)
         target_bpm = plan.arc.target_at(b.position).bpm or b.bpm
+        target_bpm = clamp_target_bpm(target_bpm, b.bpm, profile.max_stretch)
         transitions.append(Transition(
             from_idx=i, to_idx=i + 1, from_path=a.path, to_path=b.path,
             crossfade_s=crossfade_seconds(target_bpm, bars), target_bpm=target_bpm,
+            bars=bars,
         ))
     return transitions
+
+
+def _resolve_profile(plan: SetPlan):
+    """The genre profile a plan was built with (open default when untagged)."""
+    from dj import profiles
+
+    return profiles.get(getattr(plan, "genre", None))
 
 
 def _slot_length_s(slot: Slot) -> float | None:
@@ -123,8 +161,13 @@ def render_set(plan: SetPlan, out_path: str | None = None, sr: int = WORKING_SR)
     out_path = out_path or _default_out_path(plan)
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
 
-    transitions = plan_transitions(plan)
-    target_bpms = [plan.arc.target_at(s.position).bpm or s.bpm for s in plan.slots]
+    profile = _resolve_profile(plan)
+    transitions = plan_transitions(plan, profile)
+    target_bpms = [
+        clamp_target_bpm(plan.arc.target_at(s.position).bpm or s.bpm, s.bpm,
+                         profile.max_stretch)
+        for s in plan.slots
+    ]
 
     mix = np.zeros(0, dtype=np.float32)
     for i, slot in enumerate(plan.slots):

@@ -50,9 +50,17 @@ def ingest_track(ref: TrackRef) -> None:
         span["metadata"]["detector"] = structure.source
 
         tags = metadata.read_tags(ref.path).merged_with(ref.extra_tags)
+        # The grid anchor (ADR 0011): only meaningful with a real tempo — the
+        # single-section fallback reports downbeats=[0.0] with bpm 0, and a
+        # 0.000 anchor on an unknown grid would be confidently wrong.
+        first_downbeat = (
+            float(structure.downbeats[0])
+            if structure.downbeats and structure.bpm > 0 else None
+        )
         store.upsert_track(
             features, tags, track_vec, sections=sections,
             source=ref.source, is_favorite=ref.is_favorite,
+            first_downbeat_s=first_downbeat,
         )
         _drain_pending(ref.path, tags, features, span)
 

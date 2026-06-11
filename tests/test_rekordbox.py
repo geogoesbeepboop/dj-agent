@@ -97,17 +97,34 @@ def test_totaltime_prefers_durations_over_cue_end(tmp_path):
     assert unknown.find("COLLECTION/TRACK").get("TotalTime") == "0"
 
 
-def test_track_attributes_and_no_tempo_child(tmp_path):
+def test_track_attributes_and_no_tempo_without_anchor(tmp_path):
     root = _write(tmp_path, _plan([_slot("/music/a.mp3", bpm=123.456, title="Anthem",
                                          artist="Ms. X")]))
     track = root.find("COLLECTION/TRACK")
     assert track.get("Name") == "Anthem" and track.get("Artist") == "Ms. X"
     assert track.get("AverageBpm") == "123.46"
-    # No TEMPO element on purpose: a grid anchored at 0.000 would be confidently
-    # wrong, and rekordbox trusts an imported grid — better to let it analyze.
+    # No anchor known → no TEMPO on purpose: a grid anchored at a guess would be
+    # confidently wrong, and rekordbox trusts an imported grid — let it analyze.
     assert track.find("TEMPO") is None
     product = root.find("PRODUCT")
     assert product.get("Name") == "rekordbox" and product.get("Company") == "AlphaTheta"
+
+
+def test_known_first_downbeat_exports_a_real_grid_anchor(tmp_path):
+    # ADR 0011 / backlog E2: with a stored first downbeat the imported grid is
+    # OURS — TEMPO Inizio at the detected bar-1, not rekordbox's re-analysis.
+    plan = _plan([
+        _slot("/music/a.mp3", 0.0, bpm=124.0, first_downbeat_s=0.482),
+        _slot("/music/b.mp3", 1.0, bpm=0.0, first_downbeat_s=5.0),  # bpm 0 → no grid
+    ])
+    root = _write(tmp_path, plan)
+    a, b = root.findall("COLLECTION/TRACK")
+    tempo = a.find("TEMPO")
+    assert tempo is not None
+    assert tempo.get("Inizio") == "0.482"
+    assert tempo.get("Bpm") == "124.00"
+    assert tempo.get("Metro") == "4/4" and tempo.get("Battito") == "1"
+    assert b.find("TEMPO") is None
 
 
 def test_playlist_node_name_defaults_to_arc_name(tmp_path):
@@ -134,3 +151,25 @@ def test_m3u8_lists_slots_with_extinf_and_fallback(tmp_path):
         "#EXTINF:-1,b side",                            # stem fallback, no artist dash
         "/music/b side.mp3",
     ]
+
+
+def test_cue_marks_name_entry_exit_and_core_sections(tmp_path):
+    slot = _slot("/music/a.mp3", section_label="drop", cue_start_s=10.0,
+                 cue_end_s=250.0, mixin_label="intro", mixout_label="outro",
+                 core_start_s=120.0)
+    root = _write(tmp_path, _plan([slot]))
+    marks = root.findall("COLLECTION/TRACK/POSITION_MARK")
+    hot = {m.get("Name"): (m.get("Start"), m.get("Num")) for m in marks if m.get("Num") != "-1"}
+    assert hot["MIX IN — intro"] == ("10.000", "0")
+    assert hot["MIX OUT — outro"] == ("250.000", "1")
+    assert hot["DROP"] == ("120.000", "2")                  # jump to the money moment
+    # every hot cue is doubled as a memory cue (Num -1)
+    assert sum(1 for m in marks if m.get("Num") == "-1") == 3
+
+
+def test_core_cue_omitted_when_span_starts_on_it(tmp_path):
+    slot = _slot("/music/a.mp3", section_label="drop", cue_start_s=10.0,
+                 cue_end_s=250.0, core_start_s=10.0)        # core IS the entry
+    root = _write(tmp_path, _plan([slot]))
+    names = [m.get("Name") for m in root.findall("COLLECTION/TRACK/POSITION_MARK")]
+    assert "DROP" not in names
