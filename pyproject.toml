@@ -18,6 +18,8 @@ dependencies = [
     "mutagen>=1.47",               # ID3 / metadata tags (genre, mood, title)
     "psycopg2-binary>=2.9",        # pgvector via Postgres/Supabase
     "sentence-transformers>=3.0",  # taste-note embeddings (taste_vec, ADR 0003)
+    "yt-dlp>=2024.10",             # link ingestion: list + download YouTube audio (ADR 0009)
+    "spotipy>=2.24",               # link ingestion: resolve Spotify links to tracklists (ADR 0009)
 ]
 
 [project.optional-dependencies]

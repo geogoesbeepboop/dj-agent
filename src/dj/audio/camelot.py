@@ -57,6 +57,18 @@ def to_camelot(pitch_class: int, mode: str) -> str:
     return _CAMELOT[(pitch_class % 12, mode)]
 
 
+def key_name(code: str) -> str:
+    """Map a Camelot code back to a musical key name: '8A' → 'Am', '8B' → 'C'.
+
+    Rekordbox's XML import expects a Tonality string in key-name form; sharps
+    follow PITCH_NAMES (so 2A → 'D#m', not 'Ebm')."""
+    target = parse(code)
+    for (pc, mode), c in _CAMELOT.items():
+        if parse(c) == target:
+            return PITCH_NAMES[pc] + ("m" if mode == "minor" else "")
+    raise ValueError(f"bad Camelot code: {code!r}")  # unreachable after parse()
+
+
 def parse(code: str) -> tuple[int, str]:
     """Split '8B' -> (8, 'B'). Raises on malformed codes."""
     code = code.strip().upper()

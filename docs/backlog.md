@@ -4,7 +4,8 @@ Items the 2026-06-04 multi-agent review surfaced that I deliberately did **not**
 auto-apply, because each needs a decision from you, access to a tool/service, or
 validation on real audio I can't hear. Everything I *could* safely do offline is
 already done (see the change log at the bottom of `docs/phases.md`). IDs in
-parentheses reference the review findings.
+parentheses reference the review findings. **Group E** was added after the
+2026-06-10 link-ingestion + export build.
 
 Grouped by what's blocking it. Tell me a letter+number (e.g. "do C1") and I'll
 pick it up.
@@ -39,6 +40,9 @@ what to build/validate together once you have audio:
   Spotify playlist so friends can hear the selection (Phase 6 *sharing*). The
   capture side already uses the Spotify MCP; export would resolve each slot to a
   Spotify track (ISRC → artist+title search fallback) and call `create_playlist`.
+  *Still open — and not what `ADR 0009` built: 0009 is **ingestion** (pulling
+  tracks IN from a pasted Spotify link via client-credentials, read-only); B1 is
+  publishing a finished tracklist OUT to your account.*
   **→ This publishes to your account — I need you to OK it and confirm the connected
   Spotify MCP has `create_playlist` + write scope.** I can build the pure resolver
   behind a seam now and leave the live publish gated, if you want it staged.
@@ -84,6 +88,35 @@ what to build/validate together once you have audio:
   severity, so it's not urgent). `with _connect() as conn` commits/rolls back but
   doesn't *close* the psycopg2 connection; a shared `closing(...)` helper across
   `store`/`pending` would be tidier for the all-day Curator.
+
+## E. New from the 2026-06-10 link-ingestion + export build
+
+What that build deliberately did *not* include — each is buildable but needs
+either your ears, a rekordbox verification, or a dependency call from you.
+
+- **E1 — CLAP text-prompt expansion** (*med*). `store.nearest_to_text` embeds
+  the brief as **one** sentence today. Expanding it into several descriptor
+  sentences ("dreamy and nostalgic" → "hazy dream pop with washed-out reverb",
+  "wistful late-night synth melodies", …) and averaging the text probes is a
+  cheap retrieval win CLAP-style models usually respond to — but whether the
+  neighbors actually *feel* better is a listening call on your library.
+  **→ Buildable in an afternoon; needs your ears to validate.**
+- **E2 — rekordbox beat-grid anchor export** (*med*). The XML deliberately
+  carries **no TEMPO element** — rekordbox trusts an imported grid, and an
+  anchor we can't place (we don't store first-downbeat offsets) would be
+  confidently wrong, so rekordbox analyzes the grid itself (the MIX IN/OUT cues
+  are wall-clock seconds and land correctly regardless). We already *compute*
+  downbeats at segmentation; storing each track's first downbeat and writing a
+  real `TEMPO Inizio` from it would make the imported grid ours instead of
+  rekordbox's guess. Needs a schema column + verification in rekordbox that a
+  supplied anchor actually wins over re-analysis.
+- **E3 — smarter YouTube artist/title, or a metadata-correction pass** (*low-med*).
+  Artist/title from a YouTube video title is heuristic (split on " - ", strip
+  "(Official Video)"-style decoration, uploader fallback minus " - Topic"). A
+  wrong split puts a wrong name in the DB and weakens the parked-review
+  name+duration match (YouTube-only tracks have no ISRC). Options: a smarter
+  parser, a MusicBrainz lookup, or an LLM cleanup pass over thinly-tagged
+  downloads. **→ Your call on which dependency we take.**
 
 ---
 

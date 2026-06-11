@@ -102,18 +102,29 @@ def embed_text(text: str) -> np.ndarray:
     inputs = _processor(text=[text], return_tensors="pt", padding=True).to(_device)
     with torch.no_grad():
         feats = _model.get_text_features(**inputs)
-    return _l2(feats[0].cpu().numpy().astype(np.float32))
+    return _l2(_pooled(feats)[0].cpu().numpy().astype(np.float32))
 
 
 def _encode_audio_window(window: np.ndarray) -> np.ndarray:
     import torch
 
     inputs = _processor(
-        audios=window, sampling_rate=CLAP_SAMPLE_RATE, return_tensors="pt"
+        audio=window, sampling_rate=CLAP_SAMPLE_RATE, return_tensors="pt"
     ).to(_device)
     with torch.no_grad():
         feats = _model.get_audio_features(**inputs)
-    return feats[0].cpu().numpy().astype(np.float32)
+    return _pooled(feats)[0].cpu().numpy().astype(np.float32)
+
+
+def _pooled(feats):
+    """The projected joint-space embedding from a CLAP feature call.
+
+    transformers 5.x returns a BaseModelOutputWithPooling whose `pooler_output`
+    is the projected + L2-normalized 512-d vector (its `last_hidden_state` is the
+    raw encoder map, the wrong thing). Older versions returned the tensor directly
+    — accept both so a transformers up/downgrade can't silently corrupt vectors.
+    """
+    return feats.pooler_output if hasattr(feats, "pooler_output") else feats
 
 
 def _window(y: np.ndarray, sr: int) -> list[np.ndarray]:

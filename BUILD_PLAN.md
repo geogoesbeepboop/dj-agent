@@ -45,16 +45,18 @@ These were decided deliberately (see the ADRs in `docs/adr/`):
 ## Architecture (three layers — same substrate as the migration agent)
 
 ```
-agent-core  (substrate — reused, unchanged)
+dj/llm.py + dj/tracing.py  (inlined from the retired agent-core)
 ├── model providers · tracing · evals · queueing · budgets · sandbox
 
 dj-agent  (the product)
+├── Ingest      # pasted Spotify/YouTube link → local FLAC (the second front door)
 ├── Curator     # background: ingest audio → segment + analyze + embed → vibe DB
 ├── Vibe DB     # pgvector: tracks (acoustic vec + taste vec + cols) + sections
 ├── Taste loop  # tagging UX + taste vectors + label propagation + blended score
 ├── Architect   # LLM agent: vibe prompt → target energy/BPM arc
 ├── Selector    # generate→verify→revise loop: pick tracks AND sections to the arc
 ├── Mixer       # cue to section boundaries, beatmatch, EQ, render transitions
+├── Export      # approved set → rekordbox.xml + m3u8 (play it manually)
 ├── Critic      # deterministic transition scorer; the Selector's verifier
 └── Memory      # learns taste from accept/skip/replay (later)
 
@@ -91,10 +93,17 @@ Works on **my actual library** — no licensing hedging, because this is persona
 use. The differentiator vs Spotify is twofold: the **audio-manipulation layer**
 (real beatmatched, section-aware transitions they can't legally do) and the
 **personal taste model** (they optimize for everyone; this optimizes for me).
-The `SourceProvider` seam stays (it's cheap) but CC/remote sources are no longer
-a milestone. **Sharing:** a finished tracklist can be exported as a **Spotify
-playlist** (via the connected Spotify MCP) so friends can hear the selection;
-the beatmatched *mix* renders locally as a file.
+The library grows through **two front doors** (`ADR 0009`): local folders, and
+**pasted Spotify/YouTube links** (`python -m dj.ingest <url>`, or hand the URL
+to the curator) — Spotify resolves to catalog metadata (incl. the ISRC that
+auto-applies parked taste reviews, `ADR 0008`), the audio comes from a
+duration-matched YouTube search via `yt-dlp`, and everything flows through the
+same Curator pipeline. **Sharing/output:** every approved set ships in **two
+playable forms** (`ADR 0010`) — a `rekordbox.xml` + `.m3u8` to perform the set
+manually (order, key, BPM, and MIX IN/OUT cue points pre-set) and the
+beatmatched *mix* rendered locally as a file (`--render`). Exporting the
+tracklist as a **Spotify playlist** for friends stays on the backlog (B1, via
+the Spotify MCP).
 
 ---
 
@@ -102,18 +111,18 @@ the beatmatched *mix* renders locally as a file.
 
 | Concern | Library |
 |---|---|
-| Agent harness (Architect/Selector) | `claude-agent-sdk` |
-| Substrate (tracing/budget/queue/evals) | `agent-core[anthropic]` (local editable) |
-| Beats · downbeats · structure | **`allin1`** (All-In-One Music Structure Analyzer) target; `librosa` + `msaf` fallback — see `ADR 0005` |
+| Agent harness (Architect/Selector) | `dj.llm` `complete()` (Anthropic SDK; `claude-agent-sdk` optional later) |
+| Tracing | `langfuse` via `dj/tracing.py` (no-ops without keys) |
+| Beats · downbeats · structure | **`allin1`** (All-In-One Music Structure Analyzer) target; `librosa`-only fallback (no msaf) — see `ADR 0005` |
 | Key → Camelot | `librosa` chroma + Krumhansl (`dj/audio/camelot.py`) |
 | Loudness / energy (cross-track) | **`pyloudnorm`** (integrated + short-term LUFS) |
 | Acoustic vibe embedding (general) | **CLAP** `laion/larger_clap_music`, 512-d, via `torch`+`transformers` |
 | Taste embedding (personal) | **`sentence-transformers`** (`all-MiniLM-L6-v2`, 384-d) on my notes |
 | Metadata tags | `mutagen` (file ID3 → cheap keyword filter) |
 | Vector store | `pgvector` via `psycopg2` + Supabase (tracks + sections) |
-| Track sources | `SourceProvider` seam: local now |
-| Mixer / rendering | `pydub` + `pyrubberband` (time-stretch); stem separation later |
-| Tracing / evals | `langfuse` via agent-core |
+| Track sources | `SourceProvider` seam: local folders + Spotify/YouTube links (`spotipy` + `yt-dlp`, needs `ffmpeg`) |
+| Set export (manual mode) | stdlib `xml.etree` → rekordbox.xml + m3u8 |
+| Mixer / rendering | `pyrubberband` + `scipy` + `soundfile` (time-stretch + EQ + write); stem separation later |
 
 ---
 
@@ -156,7 +165,7 @@ Spotify. Full phase detail and open questions live in `docs/phases.md`.
 Camelot wheel, project layout, config, tests (done). CLAP encoder, basic
 `analyze`, `store`, `sources`, `metadata` (done). **Revision built + unit-tested**
 (needs only the live ingest run) to match the new model:
-- **Sections become first-class**: segment each track (`allin1`/`msaf`) →
+- **Sections become first-class**: segment each track (`allin1`, librosa fallback) →
   `sections` table rows with label, time bounds, downbeat, per-section LUFS, and
   a per-section CLAP vector.
 - **Beats/energy calibrated**: downbeat-derived BPM; integrated + short-term
@@ -189,7 +198,7 @@ surfaces sensible next labels. See `docs/taste.md`.
 *Concept (ask `tutor`): agent harness, tool calling, generate→verify→revise loops.*
 *Built + unit-tested offline: `arc.py`, `plan.py`, `critic.py`, `agents/` (tools,
 architect, selector, hitl, generate). One planning flow + arc artifact + a
-deterministic Critic verifier; agent-core `complete()` behind an injectable seam;
+deterministic Critic verifier; `dj.llm` `complete()` behind an injectable seam;
 deterministic fallbacks run with no API key. Detail: `docs/set-generation.md`.*
 - Tools as an in-process SDK MCP server: `query_vibe_db`, `get_track_features`,
   `get_sections`, `check_harmonic_compat`, `propose_arc`, `score_transition`.
@@ -231,7 +240,9 @@ using the *parts of each track* the Selector chose.
   closing the loop so the agent gets more "me" over time. *(Substrate landed:
   `persist.py` logs sets; the learning policy is `docs/backlog.md` D1.)*
 - Spotify-playlist export of approved tracklists to share with friends
-  (`docs/backlog.md` B1 — needs your authorization).
+  (`docs/backlog.md` B1 — needs your authorization). *(The playable-set export
+  already ships: every approved set writes a rekordbox.xml + m3u8, `ADR 0010` —
+  B1 is only the share-a-playlist piece.)*
 
 ---
 
@@ -239,10 +250,13 @@ using the *parts of each track* the Selector chose.
 ```bash
 cd ~/dev/dj-agent
 uv sync                      # installs from pyproject (see new deps in ADR 0005)
-cp .env.example .env         # ANTHROPIC_API_KEY, DATABASE_URL (Supabase), LANGFUSE_*
-# Phase 1/2: point the curator at a folder of audio and ingest
+cp .env.example .env         # ANTHROPIC_API_KEY, DATABASE_URL (Supabase), LANGFUSE_*,
+                             # SPOTIFY_CLIENT_ID/SECRET (only for Spotify-link ingestion)
+# Phase 1/2: point the curator at a folder of audio and ingest…
 uv run python -m dj.curator ~/Music/some-folder
+# …or paste a link (Spotify/YouTube track/album/playlist → download + ingest):
+uv run python -m dj.ingest "https://open.spotify.com/playlist/..."
 ```
 Tell Claude Code: *"Building the DJ agent, plan in BUILD_PLAN.md, on Phase [X].
-agent-core is at ../agent-core (installed). Check docs/phases.md for open
+Check docs/phases.md for open
 questions; use the `planner` subagent first."*

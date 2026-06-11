@@ -1,8 +1,9 @@
 # Set generation — Architect, Selector, Critic, Mixer (Phase 3 → 4)
 
-> The deep-dive on how a vibe brief becomes a rendered, beatmatched mix. Decisions
-> in `adr/0006` (agent shape) and `adr/0007` (crossfades). Built + unit-tested
-> without a DB, model, or audio (the heavy edges are injectable seams).
+> The deep-dive on how a vibe brief becomes a playable set — manual (rekordbox)
+> or automatic (a rendered, beatmatched mix). Decisions in `adr/0006` (agent
+> shape), `adr/0007` (crossfades), and `adr/0010` (two playable forms). Built +
+> unit-tested without a DB, model, or audio (the heavy edges are injectable seams).
 
 The pipeline is four stages, only two of which are LLM agents:
 
@@ -12,7 +13,9 @@ flowchart LR
     AR --> SE["🤖 Selector<br/>order to the Arc"]
     SE <-->|verify| CR["Critic<br/>score the plan"]
     SE --> HI{{"HITL<br/>approve?"}}
-    HI --> MX["Mixer<br/>render audio"]
+    HI --> EX["export (always)<br/>rekordbox.xml + m3u8"]
+    HI --> MX["Mixer (--render)<br/>render audio"]
+    EX --> OM(["🎛 manual set"])
     MX --> O(["🎧 mix"])
     classDef agent fill:#3b2e58,stroke:#b39ddb,color:#fff;
     class AR,SE agent;
@@ -55,7 +58,7 @@ testable with a fake and runs offline:
 ```mermaid
 flowchart TB
     BR(["brief + minutes"]) --> Q{"model given?"}
-    Q -->|yes| LLM["agent-core complete()<br/>→ JSON control points"]
+    Q -->|yes| LLM["dj.llm complete()<br/>→ JSON control points"]
     LLM --> PA{"parses & ≥2 points?"}
     PA -->|yes| ARC([Arc])
     Q -->|no| DET["deterministic:<br/>shape_from_brief + genre BPM/LUFS ranges"]
@@ -181,7 +184,38 @@ level and flatten the arc).
 
 ---
 
-## 6. Eval scorecard + `--explain` (Phase 5)
+## 6. Two playable forms of an approved set (`dj/export/rekordbox.py`, ADR 0010)
+
+Approval at the HITL gate now produces **two ways to play the same plan** — the
+agent's homework (ordering, key compatibility, energy arc, cue points) is
+identical in both; what differs is who performs the transitions:
+
+- **Manual mode (always written).** On every approved set, `generate` exports a
+  `rekordbox.xml` + `.m3u8` to `DJ_OUTPUT_DIR` (`--rekordbox <path>` overrides
+  the XML location). Import via rekordbox **Preferences → Advanced → Database →
+  rekordbox xml**, drag the playlist in, and play the set myself: the COLLECTION
+  carries each track's BPM, key (`camelot.key_name`: `8A` → `Am`), and the
+  Selector's chosen section bounds as **MIX IN / MIX OUT** markers — each written
+  twice, as a hot cue (Num 0/1) and as a memory cue, so they survive players with
+  hot cues off. `store.track_durations()` feeds `TotalTime`, which rekordbox
+  scales cue positions against, so pass-through of real file durations places
+  the markers exactly. The playlist node (`dj-agent — <arc name>`) lists the
+  slots in set order (repeats allowed); the collection dedupes by path, first
+  slot wins the cues. The m3u8 is the lowest-common-denominator fallback —
+  order only, no cues. Pure stdlib (`ElementTree`): no DB, audio, or network in
+  the export itself.
+- **Automatic mode (`--render`).** The Phase 4 Mixer's continuous beatmatched
+  file. Press play — with the §5 caveat that seams aren't yet phase-locked.
+
+> **Honest caveat.** We don't export a beat grid — the XML deliberately omits
+> the `TEMPO` element (a grid anchored at `0.000` would be confidently wrong,
+> and rekordbox trusts an imported grid), so rekordbox analyzes the grid on
+> import. The cue marks are wall-clock seconds, so they land correctly
+> regardless (backlog **E2** would export real downbeat anchors).
+
+---
+
+## 7. Eval scorecard + `--explain` (Phase 5)
 
 Two deterministic surfaces close the loop on *quality*:
 
@@ -208,7 +242,7 @@ data behind the **set-acceptance** metric and the recently-played dedup.
 # offline (deterministic arc + greedy selector, no API key), with narration:
 uv run python -m dj.agents.generate "2-hr sunset rooftop, slow build" --offline --explain
 
-# live (LLM Architect + Selector), then render the approved set:
+# live (LLM Architect + Selector), then ALSO render the automatic mix:
 uv run python -m dj.agents.generate "peak-time techno" --minutes 60 --render
 
 # eval A/B: does the blended Selector beat a CLAP-only baseline on taste-match?
@@ -216,6 +250,9 @@ uv run python -m dj.evals.runner "2-hr sunset rooftop, slow build"
 ```
 
 Track count is derived from `--minutes` (~3.5 min/track) unless `--tracks` is
-given. All three need an ingested library (`python -m dj.curator <folder>`);
-`--render` needs the `mixer` extra (`uv sync --extra mixer` + the `rubberband`
-CLI). Recently-played tracks are skipped across runs unless `--allow-repeats`.
+given. Every approved set writes the manual-mode `rekordbox.xml` + `.m3u8` to
+`DJ_OUTPUT_DIR` with no flag needed (§6; `--rekordbox <path>` moves the XML);
+`--render` adds the automatic mix and needs the `mixer` extra (`uv sync --extra
+mixer` + the `rubberband` CLI). All three need an ingested library (`python -m
+dj.curator <folder-or-url>`). Recently-played tracks are skipped across runs
+unless `--allow-repeats`.

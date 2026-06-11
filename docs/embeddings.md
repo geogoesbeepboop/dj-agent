@@ -57,6 +57,13 @@ load(path, sr=48000)
   → L2-normalize everything         → cosine is the right metric
 ```
 
+`path` is whatever the Curator hands over — a file from a local folder *or* one
+the link ingester just downloaded (`dj/ingest`: Spotify/YouTube URL → yt-dlp →
+flac). Embedding doesn't care about provenance, with one honest caveat:
+YouTube-sourced audio tops out at YouTube's quality (~128–160 kbps opus,
+re-encoded into a flac container). That's fine for CLAP analysis and listening;
+buy the file for anything precious.
+
 `embed_text(prompt)` is the same idea without windowing:
 `ClapProcessor(text=...) → get_text_features → L2-normalize`.
 
@@ -105,7 +112,11 @@ the index for exact results only in evals.
 
 `metadata.py` reads ID3 tags (genre, mood, comment) via `mutagen` into
 `tracks.tags`. These are sparse and inconsistent, so they **complement** CLAP and
-taste as a keyword filter — they don't replace either.
+taste as a keyword filter — they don't replace either. Link-ingested files are
+sparser still: a downloaded track carries only what the ingester stamps
+(artist/title/album, plus ISRC when it came via Spotify — no genre or mood), so
+for that growing slice of the library the embeddings are doing *all* of the
+semantic work.
 
 ---
 
@@ -124,13 +135,20 @@ Why CLAP stays the acoustic backbone, and what we add around it:
 Net: CLAP (acoustic, general) + sentence-transformer (taste, mine) + optional
 Essentia tags (structured mood) = hybrid retrieval, the current best practice.
 
+This table was deliberately re-validated on 2026-06-10 after the link-ingestion
+rescope; the full argument — alternatives weighed, what embeddings *don't* do,
+and the fallback ladder if text→audio neighbors disappoint — is in
+`why-vibe-vectors.md` ("Reassessed 2026-06-10").
+
 ---
 
 ## Open questions
 
 - **CLAP variant**: `larger_clap_music` is default. If text prompts feel weak,
-  `larger_clap_music_and_speech` handles language better at some cost to music
-  clustering. Swap via `CLAP_MODEL`.
+  try prompt expansion first (several descriptor sentences, averaged probes —
+  see the 2026-06-10 reassessment in `why-vibe-vectors.md`), then
+  `larger_clap_music_and_speech`, which handles language better at some cost to
+  music clustering. Swap via `CLAP_MODEL`.
 - **Section pooling**: mean-pool per section for v1. A salience-weighted pool
   (emphasize the densest bars) could sharpen the drop/chorus vectors later.
 - **Taste model**: `all-MiniLM-L6-v2` (384-d) for speed. A larger model

@@ -76,12 +76,16 @@ parked in `pending_taste` keyed by track identity, and the Curator applies it to
 `tracks.taste_*` on the matching ingest — the note is "already ready", **no extra
 input**.
 
-Two capture flows, one sink (`agents.tools.save_review` → `pending.add`):
+Three capture flows, one sink (`pending.add`; the first two via
+`agents.tools.save_review`):
 
 - **"review what's playing"** — the agent reads the Spotify MCP
   `get_currently_playing` for `artist`/`title`/`isrc`/`duration`, then saves it.
 - **conversational** — "save a review for Bicep – Glue: dreamy 3am closer, 5".
   No Spotify dependency, so it survives any change to the Spotify MCP.
+- **bulk, from a link** — `python -m dj.taste.judge <url>` walks a whole
+  playlist's tracklist (next section); tracks already in the library skip the
+  parking lot and tag directly.
 
 ```bash
 python -m dj.taste.review                 # type a review by hand (no Spotify)
@@ -95,6 +99,34 @@ as a `manual` label; several name hits or a duration mismatch → left parked an
 surfaced for a one-line resolve, so a review never lands on the wrong recording. A
 parked review for a track I don't own yet is a **want-list** entry — music I've
 already decided I love, go get the file.
+
+### Bulk judging from a link (`dj/taste/judge.py`)
+
+A playlist I already know is dozens of taste judgments waiting to happen, and
+none of them need the audio:
+
+```bash
+python -m dj.taste.judge <spotify-or-youtube-url>   # judge every track, download nothing
+```
+
+It resolves the link to catalog metadata only (the front half of link
+ingestion, `ADR 0009` — Spotify gives artist/title/duration/ISRC; YouTube a
+heuristic artist/title split), then walks the tracklist interactively: a note
+(Enter skips, `q` quits), rating 1–5, role — the same vocabulary as
+`dj.taste.tag`. Two outcomes per track:
+
+- **already in my library** — `store.find_track_by_meta(artist, title)` finds a
+  *unique* row (ambiguity returns None, never a guess) → tagged in place: the
+  note embeds into `taste_vec` exactly as if typed into `dj.taste.tag`.
+- **not owned yet** — parked as a pending review (`source='bulk'`, ADR 0008),
+  keyed by ISRC / name+duration.
+
+The loop closes at ingest: `python -m dj.ingest <same url>` fetches the files,
+and the Spotify path **stamps the catalog ISRC into each downloaded file**, so
+the Curator's auto-apply match is confident (`ADR 0008` + `ADR 0009`) — judge
+first, fetch later, zero re-typing. YouTube-only tracks carry no ISRC, so those
+match by name+duration and the ambiguous ones wait for a one-line
+`review --apply`. Ends with the tally: tagged X directly, parked Y, skipped Z.
 
 ## Tag ~150, not 2,000 — label propagation + active learning
 
@@ -162,7 +194,10 @@ src/dj/taste/
 ├── embed.py        # note → 384-d taste_vec (sentence-transformers, lazy import)
 ├── propagate.py    # provisional taste_vec + uncertainty/labeling_queue (pure + DB orchestration)
 ├── score.py        # blended score(α, β, γ) over candidates (pure, testable)
-└── tag.py          # the vibe-tagging CLI (python -m dj.taste.tag)
+├── tag.py          # the vibe-tagging CLI (python -m dj.taste.tag)
+├── pending.py      # parked reviews + the confident matcher (ADR 0008)
+├── review.py       # capture CLI: by hand · --pending want-list · --apply
+└── judge.py        # bulk judging from a pasted link (python -m dj.taste.judge)
 ```
 
 `score.py` and the math in `propagate.py` are pure (numpy only) — unit-tested

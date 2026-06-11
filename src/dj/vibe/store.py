@@ -108,8 +108,8 @@ def upsert_track(
             """
             INSERT INTO tracks
                 (path, source, duration_s, bpm, camelot, loudness_lufs, energy_curve,
-                 title, artist, genre, tags, is_favorite, embedding)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 title, artist, genre, isrc, tags, is_favorite, embedding)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (path) DO UPDATE SET
                 source        = EXCLUDED.source,
                 duration_s    = EXCLUDED.duration_s,
@@ -120,8 +120,13 @@ def upsert_track(
                 title         = EXCLUDED.title,
                 artist        = EXCLUDED.artist,
                 genre         = EXCLUDED.genre,
+                -- ISRC is the recording's immutable id: keep a known one if a later
+                -- re-ingest (e.g. a local file with no tag) comes in without it.
+                isrc          = COALESCE(EXCLUDED.isrc, tracks.isrc),
                 tags          = EXCLUDED.tags,
-                is_favorite   = EXCLUDED.is_favorite,
+                -- Favorite is a taste signal (ADR 0003): make it sticky so a plain
+                -- re-ingest (without --favorites) can't silently un-favorite a track.
+                is_favorite   = tracks.is_favorite OR EXCLUDED.is_favorite,
                 embedding     = EXCLUDED.embedding
             RETURNING id
             """,
@@ -136,6 +141,7 @@ def upsert_track(
                 tags.title or None,
                 tags.artist or None,
                 tags.genre or None,
+                tags.isrc or None,
                 tags.tags or None,              # list → TEXT[]
                 is_favorite,
                 vec,
@@ -287,6 +293,47 @@ def get_cards(paths: list[str]) -> dict[str, dict[str, Any]]:
         }
         for r in rows
     }
+
+
+def track_durations(paths: list[str]) -> dict[str, float]:
+    """Batch-fetch duration_s for a set of paths — the Rekordbox export's TotalTime."""
+    if not paths:
+        return {}
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT path, duration_s FROM tracks WHERE path = ANY(%s)", (list(paths),)
+        )
+        return {r[0]: float(r[1]) for r in cur.fetchall()}
+
+
+def find_track_by_meta(artist: str, title: str, isrc: str | None = None) -> str | None:
+    """Path of the library track for a judged item — ISRC first, then artist+title.
+
+    The bulk-judging CLI uses this to tag a track I already own directly instead
+    of parking a pending review. ISRC is the recording's global id (ADR 0008), so
+    when the judged item carries one (Spotify always does) it wins even if the
+    titles differ ('Obsesión' vs 'Obsesion (feat. …)', remasters, casing). Only if
+    there's no ISRC, or it matches nothing, do we fall back to a unique
+    case-insensitive artist+title. Ambiguity returns None — parking is the safe
+    fallback, never a guess."""
+    with _connect() as conn, conn.cursor() as cur:
+        if isrc and isrc.strip():
+            cur.execute(
+                "SELECT path FROM tracks WHERE isrc = %s ORDER BY id LIMIT 1",
+                (isrc.strip(),),
+            )
+            row = cur.fetchone()
+            if row:
+                return row[0]
+        if not (artist.strip() and title.strip()):
+            return None
+        cur.execute(
+            """SELECT path FROM tracks
+               WHERE lower(artist) = lower(%s) AND lower(title) = lower(%s)""",
+            (artist.strip(), title.strip()),
+        )
+        rows = cur.fetchall()
+    return rows[0][0] if len(rows) == 1 else None
 
 
 def favorite_taste_vectors() -> list[np.ndarray]:

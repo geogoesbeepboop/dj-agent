@@ -12,6 +12,21 @@ def test_parse_roundtrip():
     assert camelot.parse("12a") == (12, "A")
 
 
+def test_key_name_maps_back_to_musical_keys():
+    assert camelot.key_name("8A") == "Am"
+    assert camelot.key_name("8B") == "C"
+    assert camelot.key_name("12B") == "E"
+    assert camelot.key_name("5A") == "Cm"
+    assert camelot.key_name("8a") == "Am"             # case-insensitive like parse()
+
+
+def test_key_name_rejects_malformed_codes():
+    import pytest
+
+    with pytest.raises(ValueError):
+        camelot.key_name("13A")
+
+
 def test_compatible_rules():
     assert camelot.compatible("8A", "8A")    # identical
     assert camelot.compatible("8A", "8B")    # relative major/minor

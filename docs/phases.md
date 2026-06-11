@@ -39,10 +39,14 @@ queries that return sensible neighbors.
    existing `nearest_taste` / `ranked`).
 6. ✅ `curator.py` — per track: segment → analyze + embed track + embed sections +
    per-section LUFS → upsert. Stays idempotent.
+7. ✅ *(2026-06-10)* **Sources beyond a local folder are done**: `dj/ingest`'s
+   `LinkProvider` turns a pasted Spotify/YouTube link into downloaded FLACs that
+   flow through the exact same pipeline (`ADR 0009`; changelog below).
 
 **Remaining (needs the live DB + a `uv sync`):** the actual ingest run — confirm
 `allin1` installs against the torch pins (else the fallback runs automatically),
-then ingest 20–50 tracks. *(George's morning task, shared with Phase 2.)*
+then ingest 20–50 tracks (paste a playlist link, or point at a folder).
+*(George's morning task, shared with Phase 2.)*
 
 **Verify:** ingest 20–50 tracks → `nearest_to_text("dreamy nocturnal")` returns
 sensible *tracks*, and `nearest_section(...)` returns sensible *parts*; print
@@ -98,7 +102,7 @@ whose BPM/energy follow the arc and whose taste-match beats a CLAP-only baseline
 
 **Decision (resolved, `ADR 0006`):** **one planning flow with the arc as an
 explicit artifact** + a **deterministic Critic** as the Selector's verifier; built
-on agent-core `complete()` behind an injectable model seam (a Claude Agent SDK
+on `dj.llm` `complete()` behind an injectable model seam (a Claude Agent SDK
 MCP server can wrap `agents/tools.py` later). Deterministic fallbacks run offline.
 
 **Built + unit-tested (no DB, model, or audio):**
@@ -207,6 +211,61 @@ your decision/ears went to `docs/backlog.md`. Auto-applied:
 
 103 fast tests green; `ruff` clean.
 
+---
+
+## 2026-06-10 — link-first ingestion + manual-mode export
+
+The library no longer has to pre-exist as files, and an approved set is no
+longer only a machine-rendered wav: paste a link → curated tracks; approve a
+set → something a human can play. Two new ADRs (`0009` link ingestion, `0010`
+two playable forms). Everything is offline-tested behind seams (fake yt-dlp
+runners, fake spotipy clients, fake stores).
+
+- **`dj/ingest` (`ADR 0009`)** — `links.classify` (Spotify track/album/playlist/
+  artist incl. `spotify:` URIs, `/intl-xx/` prefixes; YouTube watch/shorts/
+  youtu.be/playlist incl. music.youtube.com; scheme-less pastes work; a
+  `watch?v=X&list=Y` link is the *video*) → `resolve` (spotipy
+  client-credentials for catalog metadata incl. **ISRC** — albums re-fetch full
+  track objects for it, playlists paginate, local/deleted items are skipped
+  with a summary; `yt-dlp -J` / `--flat-playlist` for YouTube, no audio at
+  resolve time) → `download.fetch` (yt-dlp → FLAC, idempotent by video id;
+  Spotify-sourced tracks are matched on YouTube via `pick_best` —
+  duration-dominant scoring with " - Topic"/official-audio bonuses and
+  live/sped-up/cover penalties — then **stamped with the catalog's
+  artist/title/album/ISRC** so parked reviews auto-apply confidently,
+  `ADR 0008`) → `LinkProvider` plugs into the unchanged Curator pipeline,
+  downloads landing in `DJ_LIBRARY_DIR/<source>/`, per-track failures printed
+  and skipped. CLIs: `python -m dj.ingest <url> [--favorites]`, and
+  `python -m dj.curator` accepts a URL anywhere it took a folder. spotdl was
+  evaluated and **rejected** (the installed v3 CLI is the legacy broken one,
+  v4 leans on bundled shared credentials that churn, and owning the match +
+  official Spotify metadata with ISRC matters for the taste loop).
+- **`dj/taste/judge`** — bulk judging: `python -m dj.taste.judge <url>` walks a
+  playlist I know, capturing note/rating/role per track with **no downloads**;
+  tracks already in the library are tagged in place (`find_track_by_meta` →
+  `set_taste`), unknown ones park as pending reviews (`source="bulk"`) that
+  auto-apply at ingest.
+- **`dj/export` (`ADR 0010`)** — `write_rekordbox_xml` (pure stdlib): collection
+  deduped by path, BPM, Tonality via the new `camelot.key_name` ('8A' → 'Am'),
+  TotalTime from real durations, **MIX IN/OUT** hot + memory cues at the chosen
+  section's bounds, and a playlist node in set order; plus `write_m3u8`.
+  `generate` now **always** exports both to `DJ_OUTPUT_DIR` on approval
+  (`--rekordbox <path>` overrides the XML path) and prints the rekordbox import
+  steps; `--render` remains automatic mode — so every approved set has **two
+  playable forms**: manual (I mix; order/key/BPM/cues pre-set) and automatic
+  (press play). Honest caveat: no beat-grid export — the XML omits the
+  TEMPO element on purpose (an anchor we can't place is worse than none) and
+  rekordbox analyzes the grid on import; cue marks are wall-clock seconds, so
+  they land correctly regardless (backlog **E2**).
+- **Supporting:** `store.find_track_by_meta` + `store.track_durations`,
+  `settings.library_dir` (`DJ_LIBRARY_DIR`) +
+  `settings.spotify_client_id/secret`, `.env.example` documents the free
+  client-credentials Spotify app (metadata only; YouTube links need zero
+  setup), `yt-dlp` + `spotipy` promoted to core deps, `.gitignore` covers
+  `library/`.
+
+197 fast tests green (was 103); `ruff` clean.
+
 ## Lingering open questions
 
 | Question | Who decides | Blocking |
@@ -219,7 +278,9 @@ your decision/ears went to `docs/backlog.md`. Auto-applied:
 | **Mixer beat-phase-lock + seam tempo** (needs your ears) | You + me on real audio | `docs/backlog.md` A1 |
 | **Extended (energy-boost) harmonic gate** — how adventurous? | You (taste) | `docs/backlog.md` C1 |
 | **Multi-user "we" taste** — when + how tastes combine | You (design) | `docs/backlog.md` C2 |
-| **Spotify playlist export** — authorize publishing | You | `docs/backlog.md` B1 |
+| **Spotify playlist export** — authorize publishing (sharing; *not* the `ADR 0009` ingestion) | You | `docs/backlog.md` B1 |
+| rekordbox XML imports cleanly (playlist, cues, keys) — verify on first import | You (one import) | `ADR 0010` validation |
+| Spotify→YouTube `pick_best` match quality (right cut, not live/cover) | You (spot-check rips) | `docs/your-todo.md` |
 | ~~`vibe-tagging`: skill now vs CLI-first~~ | ✅ resolved: CLI-first | — |
 | ~~Architect + Selector: 1 agent or 2~~ | ✅ resolved: one flow + arc artifact (`ADR 0006`) | — |
 | ~~Crossfade length: fixed vs phrase-derived~~ | ✅ resolved: phrase-derived (`ADR 0007`) | — |

@@ -105,16 +105,29 @@ def ingest(provider: SourceProvider) -> int:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv:
-        print("usage: python -m dj.curator <audio-folder> [--favorites <folder>]")
+        print("usage: python -m dj.curator <audio-folder-or-url> [--favorites <folder-or-url>]")
         return 1
+
+    def provider(target: str, is_favorite: bool = False) -> SourceProvider:
+        """Anything classify() recognizes — incl. scheme-less pastes like
+        "open.spotify.com/…" — ingests via LinkProvider (ADR 0009); the rest is a folder."""
+        from dj.ingest.links import classify  # lazy: only link ingestion needs the chain
+
+        try:
+            classify(target)
+        except ValueError:
+            return LocalFolderProvider(target, is_favorite=is_favorite)
+        from dj.ingest import LinkProvider
+
+        return LinkProvider(target, is_favorite=is_favorite)
 
     if argv[0] == "--favorites":
         if len(argv) < 2:
-            print("usage: python -m dj.curator --favorites <folder>")
+            print("usage: python -m dj.curator --favorites <folder-or-url>")
             return 1
-        ingest(LocalFolderProvider(argv[1], is_favorite=True))
+        ingest(provider(argv[1], is_favorite=True))
     else:
-        ingest(LocalFolderProvider(argv[0]))
+        ingest(provider(argv[0]))
     return 0
 
 

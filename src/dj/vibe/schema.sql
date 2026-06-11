@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS tracks (
     title         TEXT,
     artist        TEXT,
     genre         TEXT,
+    isrc          TEXT,                            -- recording id (ADR 0008): gold key for dedup/matching
     tags          TEXT[],                          -- normalized descriptor keywords
     is_favorite   BOOLEAN NOT NULL DEFAULT FALSE,
 
@@ -94,6 +95,7 @@ ALTER TABLE tracks ADD COLUMN IF NOT EXISTS taste_source TEXT;
 ALTER TABLE tracks ADD COLUMN IF NOT EXISTS taste_confidence REAL;
 ALTER TABLE tracks ADD COLUMN IF NOT EXISTS rating       SMALLINT;
 ALTER TABLE tracks ADD COLUMN IF NOT EXISTS role         TEXT;
+ALTER TABLE tracks ADD COLUMN IF NOT EXISTS isrc         TEXT;
 ALTER TABLE tracks DROP COLUMN IF EXISTS energy_mean;
 
 -- Approximate nearest-neighbor indexes for fast cosine "vibe" search.
@@ -107,6 +109,7 @@ CREATE INDEX IF NOT EXISTS sections_embedding_idx
 -- B-tree indexes for the hard mixing-constraint filters.
 CREATE INDEX IF NOT EXISTS tracks_bpm_idx     ON tracks (bpm);
 CREATE INDEX IF NOT EXISTS tracks_camelot_idx ON tracks (camelot);
+CREATE INDEX IF NOT EXISTS tracks_isrc_idx    ON tracks (isrc);
 CREATE INDEX IF NOT EXISTS sections_track_idx ON sections (track_id);
 CREATE INDEX IF NOT EXISTS sections_label_idx ON sections (label);
 

@@ -16,22 +16,23 @@ center of gravity.
 
 ## The system at a glance
 
-Three layers: the reusable **agent-core** substrate, the **dj-agent** components,
-and the **stores** (Postgres/pgvector + the HF model cache). Everything except
-the Architect and Selector is deterministic Python — no LLM.
+Two layers: the **dj-agent** components and the **stores** (Postgres/pgvector +
+the HF model cache), on two thin inlined utilities — `dj/llm.py` (tier-routed
+Anthropic `complete()`) and `dj/tracing.py` (Langfuse spans, no-op without
+keys) — kept from the retired agent-core substrate. Everything except the
+Architect and Selector is deterministic Python — no LLM.
 
 ```mermaid
 flowchart TB
-    subgraph core["agent-core · substrate (reused, never forked)"]
+    subgraph core["inlined utilities (from the retired agent-core, ADR-0004 there)"]
         direction LR
-        TRACE["tracing<br/>(Langfuse spans)"]
-        LLM["complete()<br/>tier-routed LLM"]
-        BUD["budget · queue · evals"]
+        TRACE["dj/tracing.py<br/>(Langfuse spans)"]
+        LLM["dj/llm.py complete()<br/>tier-routed Anthropic"]
     end
 
     subgraph dj["dj-agent"]
         direction TB
-        SRC["Sources<br/>SourceProvider seam"]
+        SRC["Sources<br/>LocalFolder · Link (Spotify/YouTube)"]
         CUR["Curator<br/>ingest orchestrator"]
         subgraph det["deterministic analysis"]
             direction LR
@@ -46,6 +47,7 @@ flowchart TB
         CRIT["Critic<br/>deterministic verifier"]
         HITL["HITL gate<br/>approve the plan"]
         MIX["Mixer<br/>beatmatch + render"]
+        EXP["Export<br/>rekordbox.xml + m3u8"]
     end
 
     subgraph stores["stores"]
@@ -61,11 +63,14 @@ flowchart TB
     TASTE <--> HF
     ARCH --> SEL --> CRIT
     CRIT -- revise --> SEL
-    SEL --> HITL --> MIX
+    SEL --> HITL
+    HITL --> EXP
+    HITL --> MIX
     SEL <--> PG
     ARCH -. uses .-> LLM
     SEL -. uses .-> LLM
-    MIX --> OUT["🎧 rendered mix .wav<br/>(+ optional Spotify export)"]
+    EXP --> OUTM["🎛 manual mode<br/>rekordbox.xml + m3u8"]
+    MIX --> OUT["🎧 automatic mode<br/>rendered mix .wav"]
 
     classDef agent fill:#3b2e58,stroke:#b39ddb,color:#fff;
     classDef store fill:#1b3a2f,stroke:#66bb6a,color:#fff;
@@ -73,7 +78,7 @@ flowchart TB
     class PG,HF store;
 ```
 
-🤖 = LLM agent (Claude Agent SDK / agent-core `complete()`). Everything else is
+🤖 = LLM agent (`dj.llm.complete()`, Anthropic). Everything else is
 deterministic.
 
 ---
@@ -124,7 +129,9 @@ beat grid (for BPM/downbeats) and the section bounds (for per-section vectors).
 
 ```mermaid
 flowchart TB
-    F["audio file<br/>(LocalFolderProvider)"] --> CUR{{"Curator.ingest_track"}}
+    LNK(["pasted link<br/>Spotify / YouTube"]) --> ING["dj.ingest<br/>classify → resolve → fetch (FLAC)"]
+    ING --> F
+    F["audio file<br/>(LocalFolderProvider · LinkProvider)"] --> CUR{{"Curator.ingest_track"}}
 
     CUR --> SEG["segment.segment()<br/>allin1 → librosa fallback"]
     SEG -->|"bpm · downbeats"| ANA["analyze()<br/>key→Camelot · integrated LUFS"]
@@ -149,14 +156,26 @@ Idempotent: re-ingesting a file upserts its `tracks` row `ON CONFLICT (path)` an
 **replaces** its sections, so the Curator is safe to re-run (`ADR 0004`). Detector
 provenance (`allin1` vs `librosa`) is attached to the trace span for debugging.
 
+Two front doors feed this same pipeline (`ADR 0009`): `LocalFolderProvider`
+walks files I already own; `LinkProvider` (`dj.ingest`) turns a pasted
+Spotify/YouTube link into files first — classify the URL, resolve it to a
+tracklist (metadata only, nothing downloaded yet), fetch each track as FLAC via
+`yt-dlp`, then yield the files into the Curator. Downloads are idempotent by
+video id, and a single dead video skips with a `FAILED` line instead of killing
+the playlist. `python -m dj.ingest <url> [--favorites]`, or hand the URL
+straight to `python -m dj.curator` — it accepts a link anywhere it took a
+folder. See **Sources & sharing** below for the matching/ISRC details.
+
 ---
 
 ## Set generation (Phase 3 → 4)
 
-A vibe brief becomes an approved, rendered mix. The **Architect** shapes the
+A vibe brief becomes an approved, playable set. The **Architect** shapes the
 journey (an arc artifact), the **Selector** orders tracks *and sections* to it in
 a verify loop against the deterministic **Critic**, the **HITL gate** approves the
-plan as data, and only then does the **Mixer** spend compute rendering audio.
+plan as data, and only then is anything materialized: the manual-mode export
+always (rekordbox.xml + m3u8, `ADR 0010`), the **Mixer**'s automatic render on
+`--render`.
 
 ```mermaid
 flowchart TB
@@ -179,13 +198,15 @@ flowchart TB
     CRIT -->|"pass / budget"| HITL{{"HITL gate<br/>approve the plan?"}}
 
     HITL -->|"nudge"| SEL
-    HITL -->|"approve"| MIX
+    HITL -->|"approve"| EXP["export (always)<br/>rekordbox.xml + m3u8"]
+    HITL -->|"approve + --render"| MIX
 
     subgraph MIX["Mixer"]
         M1["plan transitions<br/>(phrase-derived crossfades)"]
         M2["time-stretch to arc tempo<br/>+ equal-power crossfade + EQ swap"]
         M1 --> M2
     end
+    EXP --> OUTM(["🎛 play it myself<br/>(cues · key · BPM pre-set)"])
     MIX --> OUT(["🎧 continuous mix .wav"])
 
     DB[("vibe DB<br/>tracks · sections")] -.-> S1
@@ -223,7 +244,7 @@ sequenceDiagram
     Sel->>DB: get_sections(path) per slot
     DB-->>Sel: sections → assign cue points
     Sel-->>H: SetPlan
-    H-->>U: approved? → render (Mixer)
+    H-->>U: approved? → export (rekordbox.xml + m3u8) · --render (Mixer)
 ```
 
 With **no API key**, the Architect falls back to a deterministic arc shape and the
@@ -237,6 +258,7 @@ that greedy set is also the eval A/B baseline (`ADR 0006`).
 | Component | Module | Phase | Type | Key dep |
 |---|---|---|---|---|
 | Sources | `dj.sources.*` | 1 | Seam / I/O | pathlib |
+| Link ingestion | `dj.ingest.*` | 5+ | I/O + seams | spotipy + yt-dlp (+ ffmpeg) |
 | Segmentation | `dj.audio.segment` | 1 | DSP / ML | allin1 → librosa fallback |
 | Analysis | `dj.audio.analyze` | 1 | Deterministic DSP | librosa + pyloudnorm |
 | Camelot | `dj.audio.camelot` | 0 | Pure logic | — |
@@ -247,8 +269,8 @@ that greedy set is also the eval A/B baseline (`ADR 0006`).
 | Taste loop | `dj.taste.*` | 2 | ML + logic | sentence-transformers |
 | Arc artifact | `dj.arc` | 3 | Pure logic | — |
 | Plan types | `dj.plan` | 3 | Pure data | — |
-| Architect | `dj.agents.architect` | 3 | LLM agent | agent-core `complete()` |
-| Selector | `dj.agents.selector` | 3 | LLM agent + verify loop | agent-core + Critic |
+| Architect | `dj.agents.architect` | 3 | LLM agent | `dj.llm` `complete()` |
+| Selector | `dj.agents.selector` | 3 | LLM agent + verify loop | `dj.llm` + Critic |
 | Tool layer | `dj.agents.tools` | 3 | Seam | store + camelot + critic |
 | Critic | `dj.critic` | 3/5 | Deterministic verifier | numpy + camelot |
 | HITL gate | `dj.agents.hitl` | 3 | I/O + formatter | — |
@@ -256,11 +278,13 @@ that greedy set is also the eval A/B baseline (`ADR 0006`).
 | Eval scorecard | `dj.evals.runner` | 5 | Deterministic + DB | numpy + Critic |
 | Plan persistence | `dj.persist` | 5 | I/O (JSON) | — |
 | Explain | `dj.agents.explain` | 5 | Pure formatter | — |
+| Set export | `dj.export.rekordbox` | 5+ | Pure file building | stdlib ElementTree |
 | Memory | `dj.memory` | 6 | ML (backlog D1) | — |
 
-**agent-core** is a sibling repo at `../agent-core`, an editable dep. dj-agent
-never forks it; it reuses `agent_core.tracing.trace` (Curator spans) and
-`agent_core.complete` (Architect/Selector LLM calls).
+**agent-core was retired** (its ADR-0004): dj was its only real consumer, so
+the two functions dj used were inlined — `dj.tracing.trace` (Curator spans)
+and `dj.llm.complete` (Architect/Selector LLM calls). There is no external
+substrate dependency.
 
 ---
 
@@ -281,14 +305,39 @@ spends compute. This *is* the **set-acceptance** eval metric. Controlled by
 Personal use → ingest my real library, no licensing hedging. The differentiators
 vs Spotify are **audio manipulation** (real beatmatched, section-aware
 transitions, which need the raw decodable file) and the **personal taste model**.
-Streaming APIs can't provide raw audio, so they're excluded from *ingestion* by
-design.
+Streaming APIs still can't provide raw audio, so they're excluded as an *audio*
+source by design — but a streaming link is now a perfectly good way to *name*
+the music I want.
 
-The `SourceProvider` seam stays (cheap, clean) but CC/remote sources
-(Jamendo/FMA) are no longer a milestone. **Sharing** goes the other way: a
-finished, approved tracklist can be exported as a **Spotify playlist** via the
-connected Spotify MCP so friends can hear the selection; the beatmatched *mix*
-renders locally as a file.
+**Two front doors into the same Curator pipeline:**
+
+- **`LocalFolderProvider`** — files I already own; the original path.
+- **`LinkProvider`** (`dj.ingest`, `ADR 0009`) — paste a Spotify or YouTube
+  track/album/playlist link and it becomes local files. `links.classify` types
+  the URL (open.spotify.com incl. `/intl-xx/` and `?si=`, `spotify:` URIs,
+  watch/youtu.be/shorts/playlist, music.youtube.com; scheme-less pastes work);
+  `resolve` expands it to a tracklist — Spotify catalog metadata via
+  client-credentials `spotipy` (artist/title/album/duration/**ISRC**; no user
+  auth, no browser), YouTube via `yt-dlp -J` with a heuristic
+  artist/title split from the video name — nothing downloaded yet; `fetch`
+  pulls each track as FLAC. Spotify entries have no audio source, so each is
+  matched against a YouTube search scored mostly on **duration closeness** (the
+  wrong cut — live, sped-up, extended — poisons BPM, sections, and the vibe
+  vector alike), and the downloaded file is **stamped with the catalog's
+  artist/title/album/ISRC** so identity survives the detour — that ISRC is what
+  lets a parked taste review auto-apply confidently at ingest (`ADR 0008`).
+  Honest limits: artist/title from YouTube titles is heuristic; YouTube-only
+  tracks carry no ISRC (parked reviews then match by name+duration); and the
+  audio ceiling is YouTube's (~128–160 kbps opus in a FLAC container) — fine
+  for listening and analysis, buy the file for anything precious.
+
+**And one back door out** (`dj.export`, `ADR 0010`): every approved set ships in
+**two playable forms**. *Manual* — a `rekordbox.xml` + `.m3u8` written to
+`DJ_OUTPUT_DIR` on every approval: import into rekordbox and perform the set
+myself, with order, BPM, key, and the planned MIX IN/OUT cue points already on
+every track. *Automatic* — `--render`: the Phase 4 Mixer's continuous
+beatmatched file; press play. Sharing the *selection* (not the mix) with friends
+as a **Spotify playlist** via the Spotify MCP stays on the backlog (B1).
 
 ---
 
@@ -315,11 +364,19 @@ See `docs/adr/` for full records:
 - **Capture taste before you own the file** — a review left while listening
   (Spotify now-playing or in chat) parks in `pending_taste`, and the Curator drains
   it into the track's taste on the matching ingest (confident matches only). `adr/0008`.
+- **Links are a front door, not a streaming integration** — a pasted
+  Spotify/YouTube link resolves to a tracklist (Spotify = metadata + ISRC,
+  YouTube = the audio via yt-dlp), downloads as FLAC, and flows through the same
+  Curator pipeline. spotdl was rejected: owning the duration-dominant match and
+  the official metadata (ISRC) matters for the taste loop. `adr/0009`.
+- **Two playable forms of every approved set** — manual (rekordbox.xml + m3u8:
+  I perform the transitions; order/key/BPM/cues pre-set) and automatic (the
+  rendered mix: press play). `adr/0010`.
 - **Deterministic everything except Architect/Selector** — analysis and
   propagation have no ambiguity; the agents earn their cost on fuzzy vibe-fit and
   arc planning.
-- **agent-core as substrate, not forked** — tracing, budgets, evals, queue reused
-  across projects.
+- **No substrate dependency** — the retired agent-core's two useful functions
+  live inlined in `dj/llm.py` + `dj/tracing.py`.
 
 See `docs/set-generation.md` for the Phase 3/4 deep-dive (arc, Selector loop,
 Critic metrics, Mixer transitions) and `docs/taste.md` for the personal layer.

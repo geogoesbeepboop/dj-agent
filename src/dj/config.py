@@ -50,6 +50,24 @@ class Settings:
     sample_rate: int = field(default_factory=lambda: int(_env("DJ_SAMPLE_RATE", "22050")))
     # Where rendered mixes get written.
     output_dir: str = field(default_factory=lambda: _env("DJ_OUTPUT_DIR", "./renders"))
+    # Where link ingestion (dj.ingest) downloads audio before curating it.
+    library_dir: str = field(default_factory=lambda: _env("DJ_LIBRARY_DIR", "./library"))
+    # Spotify Web API (link resolution only — metadata, no audio). Create a free
+    # app at developer.spotify.com/dashboard; empty = Spotify links can't resolve.
+    # Reading playlists now needs *user* auth (Authorization Code flow): the
+    # app-only client-credentials flow stopped returning playlist contents after
+    # Spotify's Nov-2024 change. Register `spotify_redirect_uri` as a Redirect URI
+    # in the app dashboard, then run `python -m dj.ingest --login` once.
+    spotify_client_id: str = field(default_factory=lambda: _env("SPOTIFY_CLIENT_ID", ""))
+    spotify_client_secret: str = field(default_factory=lambda: _env("SPOTIFY_CLIENT_SECRET", ""))
+    # Spotify requires a loopback IP (127.0.0.1, not "localhost") for new apps.
+    spotify_redirect_uri: str = field(
+        default_factory=lambda: _env("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:8888/callback")
+    )
+    # Where the refreshable user token is cached after the one-time login.
+    spotify_cache_path: str = field(
+        default_factory=lambda: _env("SPOTIFY_CACHE_PATH", ".spotify-cache")
+    )
     # HITL: 'full' (approve set before render) | 'none'.
     hitl_level: str = field(default_factory=lambda: _env("HITL_LEVEL", "full"))
 
