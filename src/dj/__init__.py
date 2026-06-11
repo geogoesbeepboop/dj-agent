@@ -1,6 +1,7 @@
 """dj-agent: analyze a music library into a vibe vector DB and build real
 beatmatched DJ sets with a planned energy arc.
 
-Layers: this product sits on the agent-core substrate; the Architect/Selector
-agents (Phase 2) use the Claude Agent SDK.
+Model access is inlined (dj.llm — tiered Anthropic; see agent-core ADR-0004 for
+why the shared substrate was retired). The Architect/Selector run a hand-rolled
+generate→verify→revise loop against a deterministic Critic (dj ADR-0006).
 """

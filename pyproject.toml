@@ -6,22 +6,34 @@ readme = "BUILD_PLAN.md"
 requires-python = ">=3.12,<3.14"   # librosa/numba lag the newest Python
 
 dependencies = [
-    "agent-core",                  # substrate (editable, see [tool.uv.sources])
+    "anthropic>=0.40",             # model access (inlined dj.llm; agent-core retired, ADR-0004)
+    "langfuse>=2.50",              # tracing (dj.tracing; no-ops without keys)
     "numpy>=1.26",
     "python-dotenv>=1.0",
-    "librosa>=0.10",               # BPM / key / energy / timbre
-    "soundfile>=0.12",             # audio I/O for librosa.load
+    "librosa>=0.10",               # BPM / key / structure (structured mixing features)
+    "soundfile>=0.12",             # audio I/O for librosa.load + mix render
+    "pyloudnorm>=0.1",             # integrated/short-term LUFS, cross-track energy (ADR 0005)
+    "torch>=2.2",                  # CLAP inference (MPS on Apple Silicon)
+    "transformers>=4.40",          # laion/larger_clap_music model + processor
+    "mutagen>=1.47",               # ID3 / metadata tags (genre, mood, title)
     "psycopg2-binary>=2.9",        # pgvector via Postgres/Supabase
+    "sentence-transformers>=3.0",  # taste-note embeddings (taste_vec, ADR 0003)
+    "yt-dlp>=2024.10",             # link ingestion: list + download YouTube audio (ADR 0009)
+    "spotipy>=2.24",               # link ingestion: resolve Spotify links to tracklists (ADR 0009)
 ]
 
 [project.optional-dependencies]
-# Phase 2+: the LLM agents (Architect/Selector) + the mixer + CLAP upgrade.
+# Structure-aware segmentation (ADR 0004/0005). allin1 is the target detector;
+# it pulls heavy deps that can fight the torch pins — the librosa fallback in
+# audio/segment.py runs without it (msaf not required), so this extra is opt-in.
+segment = ["allin1>=1.0", "msaf>=0.1"]
+# Phase 3: the LLM agents (Architect/Selector). The loop runs on dj.llm.complete();
+# this SDK is optional — for moving the toolbelt into an in-process MCP server later.
 agents = ["claude-agent-sdk>=0.1"]
-mixer  = ["pydub>=0.25", "pyrubberband>=0.3"]
+# Phase 4: the Mixer. pyrubberband needs the rubberband CLI; scipy powers the EQ
+# bass-swap — both degrade gracefully if absent (mixer.py).
+mixer  = ["pyrubberband>=0.3", "scipy>=1.11"]
 dev    = ["pytest>=8.0", "ruff>=0.6"]
-
-[tool.uv.sources]
-agent-core = { path = "../agent-core", editable = true }
 
 [build-system]
 requires = ["hatchling"]
@@ -37,3 +49,9 @@ target-version = "py312"
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths  = ["tests"]
+# Deselect slow tests (CLAP model download/inference) from the default run.
+# Run them explicitly with:  uv run pytest -m slow
+addopts = "-m 'not slow'"
+markers = [
+    "slow: requires the CLAP model (downloads weights, runs inference)",
+]

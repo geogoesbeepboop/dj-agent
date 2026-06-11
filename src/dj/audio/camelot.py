@@ -57,6 +57,18 @@ def to_camelot(pitch_class: int, mode: str) -> str:
     return _CAMELOT[(pitch_class % 12, mode)]
 
 
+def key_name(code: str) -> str:
+    """Map a Camelot code back to a musical key name: '8A' → 'Am', '8B' → 'C'.
+
+    Rekordbox's XML import expects a Tonality string in key-name form; sharps
+    follow PITCH_NAMES (so 2A → 'D#m', not 'Ebm')."""
+    target = parse(code)
+    for (pc, mode), c in _CAMELOT.items():
+        if parse(c) == target:
+            return PITCH_NAMES[pc] + ("m" if mode == "minor" else "")
+    raise ValueError(f"bad Camelot code: {code!r}")  # unreachable after parse()
+
+
 def parse(code: str) -> tuple[int, str]:
     """Split '8B' -> (8, 'B'). Raises on malformed codes."""
     code = code.strip().upper()
@@ -82,8 +94,10 @@ def compatible(a: str, b: str) -> bool:
 def distance(a: str, b: str) -> int:
     """Rough harmonic distance (0 = perfect, higher = rougher transition).
 
-    0: identical · 1: relative or ±1 same-letter · 2+: number gap (mod 12).
-    Lets the Selector *prefer* smoother transitions, not just allow/deny.
+    0: identical · 1: relative, ±1 same-letter (fifth) · 2: ±1-semitone energy
+    boost (±5 on the wheel, same letter) — a smooth lift DJs use constantly · 2+:
+    wider number gaps. Lets the Selector *prefer* smoother transitions within the
+    compatible set, not just allow/deny.
     """
     (na, la), (nb, lb) = parse(a), parse(b)
     if na == nb and la == lb:
@@ -91,7 +105,42 @@ def distance(a: str, b: str) -> int:
     if na == nb and la != lb:
         return 1
     step = min((na - nb) % 12, (nb - na) % 12)
+    if la == lb and step == 5:
+        return 2                         # +1-semitone energy boost — read as smooth
     return step + (0 if la == lb else 1)
+
+
+def energy_boost(a: str, b: str) -> bool:
+    """True if B is a ±1-semitone 'energy boost' from A (same mode, ±5 on the wheel).
+
+    The standard trick to lift a set's energy without a key clash — a richer move
+    than the textbook three, available to a future extended-harmonic Selector.
+    """
+    (na, la), (nb, lb) = parse(a), parse(b)
+    return la == lb and min((na - nb) % 12, (nb - na) % 12) == 5
+
+
+def grade(a: str, b: str) -> int:
+    """Harmonic move grade: 0 perfect · 1 energy-boost/diagonal · 2 two-step · 3 clash.
+
+    A tier above `compatible()` (which is exactly grade 0). The Critic can surface
+    the grade and a future Selector can *allow grade ≤ 1 with a penalty* — but that
+    loosens the hard key gate, a taste call (see the backlog), so the default gate
+    stays strict.
+    """
+    (na, la), (nb, lb) = parse(a), parse(b)
+    if na == nb:
+        return 0                         # identical or relative major/minor
+    step = min((na - nb) % 12, (nb - na) % 12)
+    if la == lb:
+        if step == 1:
+            return 0                     # adjacent fifth — textbook compatible
+        if step == 5:
+            return 1                     # ±1-semitone energy boost
+        if step == 2:
+            return 2                     # two-step lift
+        return 3
+    return 1 if step == 1 else 3         # diagonal (relative of a neighbour) else clash
 
 
 def _wheel_adjacent(na: int, nb: int) -> bool:

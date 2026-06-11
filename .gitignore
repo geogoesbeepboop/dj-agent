@@ -2,10 +2,15 @@
 __pycache__/
 *.pyc
 .env
+.spotify-cache
+.cache
+.DS_Store
 .pytest_cache/
 .ruff_cache/
 renders/
+library/
 *.wav
 *.mp3
 *.flac
+*.m4a
 uv.lock
