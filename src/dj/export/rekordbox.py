@@ -61,11 +61,15 @@ def write_rekordbox_xml(
             Tonality=_tonality(slot.camelot),
             TotalTime=_total_time(slot, durations),
         )
-        # Deliberately NO <TEMPO> element: rekordbox trusts an imported grid, and
-        # we don't know each track's first-downbeat offset — a grid anchored at
-        # 0.000 would be confidently wrong on every track. Omitting it makes
-        # rekordbox analyze the grid itself; AverageBpm and the second-based
-        # cue marks below carry regardless (backlog E2: export real anchors).
+        # Beat-grid anchor (ADR 0011, was backlog E2): when segmentation found
+        # the track's first downbeat, write a real TEMPO so the imported grid is
+        # OURS — bar-1s where the detector put them, cues exactly on the "1".
+        # Without an anchor (legacy rows, bpm 0) we still deliberately omit
+        # TEMPO: rekordbox trusts an imported grid, and a 0.000-anchored guess
+        # would be confidently wrong — better to let rekordbox analyze.
+        if slot.first_downbeat_s is not None and slot.bpm > 0:
+            ET.SubElement(track, "TEMPO", Inizio=f"{slot.first_downbeat_s:.3f}",
+                          Bpm=f"{slot.bpm:.2f}", Metro="4/4", Battito="1")
         for name, start_s, num in _cue_marks(slot):
             # Each cue twice: a hot cue (Num 0/1) to jump from, and a memory
             # cue (Num -1) so it survives on players with hot cues disabled.
@@ -140,13 +144,22 @@ def _total_time(slot: Slot, durations: dict[str, float] | None) -> str:
 
 
 def _cue_marks(slot: Slot) -> list[tuple[str, float, str]]:
-    """(name, start_s, hot-cue Num) for the slot's planned mix points, if any."""
-    label = slot.section_label or "cue"
+    """(name, start_s, hot-cue Num) for the slot's planned mix points, if any.
+
+    Three marks when the plan knows them: A = mix in (entry section), B = mix
+    out (exit section), C = where the core section hits (the part the arc
+    targeted — drop/chorus), so jumping straight to the money moment is one pad
+    away. The entry/exit get their own section labels (a span may enter on the
+    intro and exit on the bridge)."""
     marks: list[tuple[str, float, str]] = []
     if slot.cue_start_s is not None:
-        marks.append((f"MIX IN — {label}", slot.cue_start_s, "0"))
+        marks.append((f"MIX IN — {slot.mixin_label or slot.section_label or 'cue'}",
+                      slot.cue_start_s, "0"))
     if slot.cue_end_s is not None:
-        marks.append((f"MIX OUT — {label}", slot.cue_end_s, "1"))
+        marks.append((f"MIX OUT — {slot.mixout_label or slot.section_label or 'cue'}",
+                      slot.cue_end_s, "1"))
+    if slot.core_start_s is not None and slot.core_start_s != slot.cue_start_s:
+        marks.append(((slot.section_label or "core").upper(), slot.core_start_s, "2"))
     return marks
 
 

@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-06-10
 **Relates to:** `0004-structure-aware-sections.md`, `0006-one-planning-agent-and-verifier.md`, `0007-phrase-derived-crossfades.md`
+**Refined by:** `0011-grid-truth-downbeat-phase-and-anchors.md` (the "no `TEMPO`" trade-off below)
 
 ## Context
 
@@ -86,6 +87,9 @@ Concretely (`dj/export/rekordbox.py`, pure stdlib; wired in
   `AverageBpm` and the second-based cue marks carry regardless. Ingest *does*
   know the downbeats (`ADR 0005`), so exporting a real anchor is the natural
   refinement (backlog **E2**), not built today.
+  **Refined by `ADR 0011`:** ingest now stores `tracks.first_downbeat_s` and the
+  XML emits a real `TEMPO` anchor when the anchor is known and `bpm > 0`;
+  otherwise `TEMPO` is still omitted, preserving this safety property.
 - **Cue placement depends on TotalTime.** rekordbox scales marker positions
   against the declared track length, so the fallback chain (real duration →
   `cue_end_s` → 0) matters; `store.track_durations()` supplies real values for

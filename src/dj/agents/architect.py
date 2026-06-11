@@ -39,21 +39,29 @@ def plan_arc(
     *,
     model: Model | None = None,
     n_points: int = 5,
+    profile=None,                       # dj.profiles.GenreProfile | None
 ) -> Arc:
     """Plan the set's arc from a free-text brief. Never raises — falls back to a
-    deterministic shape if there's no model or the model's JSON won't parse."""
+    deterministic shape if there's no model or the model's JSON won't parse.
+
+    A genre profile (when given) seeds the BPM/LUFS ranges and the default shape
+    — both for the deterministic fallback and as context the LLM sees."""
     if model is not None:
         try:
+            user = f"Brief: {brief}\nLength: {minutes} min."
+            if profile is not None:
+                lo, hi = profile.bpm_range
+                user += f"\nGenre: {profile.name} (typical {lo:.0f}–{hi:.0f} BPM)."
             text = model([
                 {"role": "system", "content": _SYSTEM},
-                {"role": "user", "content": f"Brief: {brief}\nLength: {minutes} min."},
+                {"role": "user", "content": user},
             ])
             arc = _parse_arc(text, minutes)
             if arc is not None and len(arc.points) >= 2:
                 return arc
         except Exception:
             pass  # any LLM/parse failure → deterministic fallback below
-    return _deterministic_arc(brief, minutes, n_points)
+    return _deterministic_arc(brief, minutes, n_points, profile)
 
 
 def default_model(tier: str = "hard", temperature: float = 0.3) -> Model:
@@ -67,10 +75,11 @@ def default_model(tier: str = "hard", temperature: float = 0.3) -> Model:
     return _call
 
 
-def _deterministic_arc(brief: str, minutes: int, n_points: int) -> Arc:
-    shape = shape_from_brief(brief)
-    bpm = _bpm_range(brief)
-    lufs = _lufs_range(brief)
+def _deterministic_arc(brief: str, minutes: int, n_points: int, profile=None) -> Arc:
+    default_shape = profile.default_shape if profile is not None else "build"
+    shape = shape_from_brief(brief, default=default_shape)
+    bpm = profile.bpm_range if profile is not None else _bpm_range(brief)
+    lufs = profile.lufs_range if profile is not None else _lufs_range(brief)
     return Arc.from_shape(
         name=_name_from_brief(brief), minutes=minutes, shape=shape,
         bpm=bpm, lufs=lufs, n_points=n_points,

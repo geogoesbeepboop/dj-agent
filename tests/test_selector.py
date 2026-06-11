@@ -138,3 +138,88 @@ def test_section_assignment_rewrites_slot_lufs_to_the_played_part():
     assert plan.slots[0].section_label == "drop"
     assert plan.slots[0].lufs == -8.0                       # rewritten from -20
     assert evaluate_set(plan).energy_arc_rmse == 0.0        # now on-target
+
+
+# --- play-span planning: mix-in section → core → mix-out section --------------
+
+
+class _FSec:
+    """Section stand-in with mix flags (what store.get_sections now returns)."""
+
+    def __init__(self, idx, label, lufs, start_s, end_s, mixin=False, mixout=False):
+        self.idx, self.label, self.energy_lufs = idx, label, lufs
+        self.start_s, self.end_s = start_s, end_s
+        self.is_mixin, self.is_mixout = mixin, mixout
+
+
+def _track_sections():
+    return [
+        _FSec(0, "intro", -20.0, 0.0, 60.0, mixin=True),
+        _FSec(1, "verse", -14.0, 60.0, 120.0),
+        _FSec(2, "drop", -8.0, 120.0, 180.0),
+        _FSec(3, "bridge", -15.0, 180.0, 240.0, mixout=True),
+        _FSec(4, "outro", -18.0, 240.0, 300.0, mixout=True),
+    ]
+
+
+def test_plan_play_span_rides_in_clean_and_out_clean():
+    entry, core, exit_ = selector.plan_play_span(
+        _track_sections(), target_lufs=-8.0, min_play_s=120, max_play_s=330)
+    assert core.label == "drop"                 # the arc's energy fit
+    assert entry.label == "intro"               # enters on a mix-in section
+    assert exit_.label == "outro"               # longest in-window span wins
+    assert exit_.end_s - entry.start_s == 300.0
+
+
+def test_plan_play_span_respects_the_airtime_cap():
+    entry, core, exit_ = selector.plan_play_span(
+        _track_sections(), target_lufs=-8.0, min_play_s=120, max_play_s=250)
+    assert exit_.label == "bridge"              # 240 s fits; 300 s overflows
+
+
+def test_plan_play_span_falls_back_to_the_core_alone():
+    secs = [_FSec(0, "drop", -8.0, 0.0, 90.0)]  # nothing flagged anywhere
+    entry, core, exit_ = selector.plan_play_span(secs, target_lufs=-8.0)
+    assert entry is core is exit_
+
+
+def test_plan_play_span_none_without_energies():
+    assert selector.plan_play_span([], -8.0) is None
+
+
+def test_with_sections_fills_the_span_fields():
+    arc = Arc.from_shape("flat", shape="flat", bpm=(124, 124), lufs=(-8, -8))
+    cards = [_card("a", 124, "8A", -20, artist="a")]
+    plan = selector.select("peak", arc, model=None, n=1,
+                           tools=_SectionTools(cards, _track_sections()))
+    s = plan.slots[0]
+    assert s.section_label == "drop" and s.lufs == -8.0
+    assert (s.cue_start_s, s.cue_end_s) == (0.0, 300.0)
+    assert s.mixin_label == "intro" and s.mixout_label == "outro"
+    assert s.core_start_s == 120.0              # the drop's hit point → hot cue
+
+
+def test_select_with_profile_stamps_the_genre():
+    from dj import profiles
+
+    arc = Arc.from_shape("flat", shape="flat", bpm=(95, 95), lufs=(-10, -10))
+    cards = [_card("a", 92, "8A", -10, artist="a"), _card("b", 99, "9A", -10, artist="b")]
+    plan = selector.select("hip hop", arc, model=None, n=2,
+                           profile=profiles.get("hiphop"), tools=_FakeTools(cards))
+    assert plan.genre == "hiphop"               # the Mixer reads this back at render
+
+
+def test_genre_thresholds_change_the_verdict():
+    from dj import profiles
+    from dj.plan import Slot
+
+    arc = Arc.from_shape("flat", shape="flat", bpm=(95, 95), lufs=(-10, -10))
+    slots = [
+        Slot(0.0, "a", 92, "8A", -10, artist="a"),
+        Slot(0.5, "b", 99, "3B", -10, artist="b"),   # 7-BPM jump + key clash into it
+        Slot(1.0, "c", 95, "4B", -10, artist="c"),   # compatible out of 3B
+    ]
+    plan = SetPlan(arc, slots)
+    # The same set: fine as a hip-hop set (cuts), needs work as a house set (blends).
+    assert evaluate_set(plan, profiles.get("hiphop").thresholds()).passed
+    assert not evaluate_set(plan, profiles.get("house").thresholds()).passed

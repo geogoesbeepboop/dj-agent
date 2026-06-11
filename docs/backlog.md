@@ -29,6 +29,10 @@ what to build/validate together once you have audio:
   the `Slot`/Mixer, align B's first downbeat to A's grid at the overlap, and hold a
   single shared tempo (or an intra-track tempo ramp) through the crossfade. This is
   real DSP that must be tuned by ear. **→ Let's do this together on your first renders.**
+  *(2026-06-10, ADR 0011: section bounds are now snapped to the downbeat grid and
+  the librosa fallback finds the true bar-1 phase, so both sides of a splice at
+  least START on a real "1" — the remaining gap is the sample-accurate alignment
+  + seam tempo above, unchanged.)*
 - **A2 — Real bass-swap / EQ mixing** (#9 / #20, *med*). The EQ swap is a one-sided,
   fixed-cutoff high-pass on the incoming track with a hard in/out at the splice;
   A's bass never ducks. A proper bass-swap ramps A's low end down as B's comes up.
@@ -101,15 +105,14 @@ either your ears, a rekordbox verification, or a dependency call from you.
   cheap retrieval win CLAP-style models usually respond to — but whether the
   neighbors actually *feel* better is a listening call on your library.
   **→ Buildable in an afternoon; needs your ears to validate.**
-- **E2 — rekordbox beat-grid anchor export** (*med*). The XML deliberately
-  carries **no TEMPO element** — rekordbox trusts an imported grid, and an
-  anchor we can't place (we don't store first-downbeat offsets) would be
-  confidently wrong, so rekordbox analyzes the grid itself (the MIX IN/OUT cues
-  are wall-clock seconds and land correctly regardless). We already *compute*
-  downbeats at segmentation; storing each track's first downbeat and writing a
-  real `TEMPO Inizio` from it would make the imported grid ours instead of
-  rekordbox's guess. Needs a schema column + verification in rekordbox that a
-  supplied anchor actually wins over re-analysis.
+- **E2 — rekordbox beat-grid anchor export** (*med*). ✅ **Built 2026-06-10
+  (ADR 0011)** — segmentation now estimates the true downbeat *phase* (not
+  `beats[::4]`), the Curator stores `tracks.first_downbeat_s`, and the export
+  writes a real `TEMPO Inizio` whenever the anchor is known (tracks without one
+  still omit TEMPO so rekordbox analyzes). **What's left is yours:** import a
+  set and verify the supplied anchor actually wins over rekordbox's re-analysis
+  (zoom the waveform: do the grid's bar-1s sit on the kicks?). Old rows need a
+  re-ingest to pick up anchors + downbeat-snapped section bounds.
 - **E3 — smarter YouTube artist/title, or a metadata-correction pass** (*low-med*).
   Artist/title from a YouTube video title is heuristic (split on " - ", strip
   "(Official Video)"-style decoration, uploader fallback minus " - Topic"). A

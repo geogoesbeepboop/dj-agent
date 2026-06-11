@@ -12,7 +12,10 @@ set ships in **two playable forms** (ADR 0010):
     uv run python -m dj.agents.generate "2-hr sunset rooftop, deep → melodic, slow build"
     uv run python -m dj.agents.generate "peak-time techno" --minutes 60 --render --explain
 
-Track count is derived from `--minutes` (≈3.5 min/track) unless `--tracks` is given.
+A genre profile (dj/profiles.py) is detected from the brief — or forced with
+`--genre` — and shapes everything: arc BPM/LUFS ranges, Critic thresholds, play
+spans, crossfade phrase caps, and tempo-stretch limits. Track count is derived
+from `--minutes` (genre-typical airtime per track) unless `--tracks` is given.
 By default it uses a live model (dj.llm, Anthropic) for the Architect + Selector; pass
 `--offline` to run the deterministic arc + greedy selector with no API calls.
 `--explain` narrates the set; every generation is logged for the set-acceptance
@@ -39,24 +42,33 @@ def generate(
     explain: bool = False,
     allow_repeats: bool = False,
     rekordbox_path: str | None = None,
+    genre: str | None = None,
 ) -> int:
-    from dj import persist
+    from dj import persist, profiles
+    from dj.critic import evaluate_set
 
     if not settings.db_enabled:
         print("DATABASE_URL not set — ingest a library first (python -m dj.curator <folder>).")
         return 1
 
+    profile = profiles.get(genre) if genre else profiles.detect(brief)
+    print(f"[profile] genre: {profile.name} "
+          f"({profile.bpm_range[0]:.0f}–{profile.bpm_range[1]:.0f} BPM, "
+          f"blends ≤{profile.max_xfade_bars} bars, stretch ±{profile.max_stretch:.0%})")
+
     model = None if offline else architect.default_model()
-    n = tracks if tracks is not None else selector.tracks_for_minutes(minutes)
+    n = tracks if tracks is not None else selector.tracks_for_minutes(
+        minutes, avg_slot_minutes=profile.avg_slot_minutes)
     print(f"[architect] planning arc for: {brief!r}")
-    arc = architect.plan_arc(brief, minutes=minutes, model=model)
+    arc = architect.plan_arc(brief, minutes=minutes, model=model, profile=profile)
     print(f"[architect] arc '{arc.name}': "
           + " → ".join(f"{p.bpm:.0f}bpm/{p.lufs:.0f}LUFS" for p in arc.points))
 
     exclude = None if allow_repeats else persist.recent_paths()
     extra = f" (excluding {len(exclude)} recently-played)" if exclude else ""
     print(f"[selector] choosing ~{n} tracks for ~{minutes} min…{extra}")
-    plan = selector.select(brief, arc, model=model, n=n, exclude_paths=exclude)
+    plan = selector.select(brief, arc, model=model, n=n, exclude_paths=exclude,
+                           profile=profile)
     if not plan.slots:
         print("[selector] no candidates matched — is the library ingested for this BPM band?")
         return 1
@@ -66,18 +78,20 @@ def generate(
 
         print("\n" + narrate(plan) + "\n")
 
-    approved = hitl.confirm(plan)
+    report = evaluate_set(plan, profile.thresholds())   # graded on the GENRE's bars
+    approved = hitl.confirm(plan, report)
     hist = persist.save_plan(plan, brief=brief, approved=approved)  # set-acceptance record
     print(f"[persist] logged this set → {hist}")
     if not approved:
         print("Not approved — stopping before export/render.")
         return 0
 
-    xml, m3u = _export_set(plan, rekordbox_path)
+    xml, m3u, sheet = _export_set(plan, rekordbox_path, report)
     print(f"[export] manual mode → {xml}")
     print("         import in rekordbox: Preferences → Advanced → Database → rekordbox xml,")
     print("         then drag the playlist in — cues, BPM, and key are already set.")
     print(f"[export] plain playlist → {m3u}")
+    print(f"[export] set sheet (print me) → {sheet}")
 
     if render:
         from dj.mixer import render_set
@@ -89,9 +103,9 @@ def generate(
     return 0
 
 
-def _export_set(plan, rekordbox_path: str | None) -> tuple[str, str]:
-    """Write the manual-mode artifacts (rekordbox.xml + m3u8) for an approved plan."""
-    from dj.export import write_m3u8, write_rekordbox_xml
+def _export_set(plan, rekordbox_path: str | None, report=None) -> tuple[str, str, str]:
+    """Write the manual-mode artifacts (rekordbox.xml + m3u8 + set sheet)."""
+    from dj.export import write_m3u8, write_rekordbox_xml, write_setsheet
     from dj.vibe import store
 
     safe = "".join(c if c.isalnum() else "-" for c in plan.arc.name).strip("-") or "set"
@@ -99,15 +113,16 @@ def _export_set(plan, rekordbox_path: str | None) -> tuple[str, str]:
     durations = store.track_durations(plan.paths)
     xml = write_rekordbox_xml(plan, rekordbox_path or f"{base}.rekordbox.xml", durations=durations)
     m3u = write_m3u8(plan, f"{base}.m3u8", durations=durations)
-    return xml, m3u
+    sheet = write_setsheet(plan, f"{base}.setsheet.md", durations=durations, report=report)
+    return xml, m3u, sheet
 
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv:
         print('usage: python -m dj.agents.generate "<vibe brief>" '
-              "[--minutes N] [--tracks N] [--offline] [--render] [--explain] "
-              "[--allow-repeats] [--rekordbox <out.xml>]")
+              "[--minutes N] [--tracks N] [--genre house|techno|…] [--offline] "
+              "[--render] [--explain] [--allow-repeats] [--rekordbox <out.xml>]")
         return 1
 
     brief = argv[0]
@@ -120,6 +135,7 @@ def main(argv: list[str] | None = None) -> int:
         offline="--offline" in rest, render="--render" in rest,
         explain="--explain" in rest, allow_repeats="--allow-repeats" in rest,
         rekordbox_path=_opt_value(rest, "--rekordbox"),
+        genre=_opt_value(rest, "--genre"),
     )
 
 

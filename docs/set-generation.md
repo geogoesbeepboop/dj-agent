@@ -207,11 +207,13 @@ identical in both; what differs is who performs the transitions:
 - **Automatic mode (`--render`).** The Phase 4 Mixer's continuous beatmatched
   file. Press play — with the §5 caveat that seams aren't yet phase-locked.
 
-> **Honest caveat.** We don't export a beat grid — the XML deliberately omits
-> the `TEMPO` element (a grid anchored at `0.000` would be confidently wrong,
-> and rekordbox trusts an imported grid), so rekordbox analyzes the grid on
-> import. The cue marks are wall-clock seconds, so they land correctly
-> regardless (backlog **E2** would export real downbeat anchors).
+> **Beat grid (ADR 0011, was backlog E2).** When the library knows a track's
+> first downbeat (`tracks.first_downbeat_s`, stored at ingest), the XML carries
+> a real `TEMPO Inizio` — the imported grid is *ours*, bar-1s where the detector
+> put them. Tracks ingested before the anchor column (or via the single-section
+> fallback) still omit TEMPO so rekordbox analyzes those itself; cue marks are
+> wall-clock seconds and land correctly either way. Still to verify on a real
+> import: that a supplied anchor wins over rekordbox's re-analysis.
 
 ---
 

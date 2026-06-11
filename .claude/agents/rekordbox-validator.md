@@ -1,6 +1,6 @@
 ---
 name: rekordbox-validator
-description: Validate a generated rekordbox.xml + m3u8 against the export invariants (well-formed XML, resolvable locations, sane cue marks, playlist keys, no TEMPO element). Use after touching dj/export or before George imports a set into rekordbox.
+description: Validate a generated rekordbox.xml + m3u8 against the export invariants (well-formed XML, resolvable locations, sane cue marks, playlist keys, TEMPO only with a real anchor). Use after touching dj/export or before George imports a set into rekordbox.
 tools: Bash, Read, Glob
 ---
 
@@ -19,9 +19,13 @@ Checks, in order (one python snippet is fine; report each as PASS/FAIL + evidenc
 3. **Locations**: each `Location` starts `file://localhost/`, URL-unquotes to an
    absolute path; flag (don't fail) paths that don't exist on disk — the plan
    may predate a library move, but George should know before importing.
-4. **No TEMPO element** on any TRACK — deliberately omitted (a 0.000-anchored
-   grid would be confidently wrong; rekordbox must analyze). Its presence means
-   a regression.
+4. **TEMPO only with a real anchor** (ADR 0011): a TRACK may carry at most ONE
+   `TEMPO` child, and only when the library knew its first downbeat. If present:
+   `Inizio` parses as a float ≥ 0 (and NOT exactly "0.000" — a zero anchor is
+   the confidently-wrong case the old no-TEMPO rule guarded against; flag it),
+   `Bpm` matches the track's `AverageBpm`, `Metro="4/4"`, `Battito="1"`.
+   A TRACK with no TEMPO is fine (legacy rows ingested before the anchor
+   column, or the single-section fallback) — rekordbox analyzes those itself.
 5. **Cue marks**: POSITION_MARKs come in hot+memory pairs (Num 0/-1 for MIX IN,
    1/-1 for MIX OUT); Start ≥ 0 and, when TotalTime > 0, Start ≤ TotalTime;
    MIX IN Start < MIX OUT Start per track.
