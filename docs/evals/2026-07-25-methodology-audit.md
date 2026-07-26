@@ -222,3 +222,37 @@ Mirror `.claude/gate.sh` exactly (venv-first tool resolution, `uv run` fallback,
 - **`dj/profiles.py` + `critic.Thresholds`.** Per-genre accept bars already exist as versionable data — that is the rubric, in code.
 - **`persist.py`'s JSONL substrate.** Right idea, right format, right place; it just records the wrong fields (Phase 1 fixes that).
 - **The 213-test fast suite itself.** Genuinely disciplined: no DB, no network, no model weights, no audio; every seam faked at its source. It is honest at N=1 and should stay that way — the eval suite is a *sibling* to it, not a replacement.
+
+---
+
+## Addendum — contract v2 (2026-07-25, same day): what changes in this plan
+
+The house contract absorbed Anthropic's demystifying-evals, harness-design, and
+infrastructure-noise posts after this audit was written. The verdicts stand; amendments to the
+bootstrap plan:
+
+1. **Name the tiers from day one (D4 v2).** Phase 2's T1–T8 are the **regression tier** (target
+   ~100%; universally-passing cases are guards, not dead sensors). Phase 4's L1–L6 start life as
+   the **capability tier** — they are *allowed to fail*, report as a trend line, and never gate
+   `.claude/evals.sh` (Phase 6's exit code covers the regression tier only). L-cases graduate to
+   regression once they stabilize. This also un-blocks writing cases for behaviors the Selector
+   can't do yet — previously inexpressible.
+2. **Matched negatives in Phase 3 (D6 v2).** As written the safety section is one-sided. Pair
+   them: S3 (editorial playlist refusal) gets a matched ordinary playlist that must ingest
+   without a warning; S1 (injection title) gets a benign weird-title track ("[1975 Remaster]")
+   that must remain selectable; S6 (auto-reject on piped stdin) gets an interactive-approval
+   case that must export.
+3. **Reference solutions (D4 v2).** Every Phase 2/3 case ships a known-good plan/output the
+   grader demonstrably accepts (the Phase 0 fixture makes this cheap); a case at 0% across all
+   runs is presumed broken — repair is its own reviewed diff.
+4. **Trial isolation for Phase 4's N=5 (D2 v2).** Each live trial gets a fresh model
+   conversation and untouched fixture state; count API/infra errors separately from case
+   failures (an error-heavy run is void, not a regression). Note `evals/NOISE.md` should record
+   deltas in case-flips, not points — at Phase 2's ~14 cases, one flip is ~7 points.
+5. **The live tier gets scheduled once it exists (D8 v2)** — bounded budget, and the digest
+   shows when it last ran; `DJ_EVAL_LIVE=1` being perpetually unset must be visible, not silent.
+6. **Judge caveat upgraded:** if a vibe-fit judge is ever added, v2 adds to the D3 caveats
+   already listed here: tune it skeptical and validate against known-*bad* sets (mis-vibed sets
+   George rejected), anchor with few-shot scored examples, include an "Unknown" escape — and
+   never give it a dimension it cannot perceive (the "Claude can't hear" rule; grade audio
+   features from extracted data, not vibes).
